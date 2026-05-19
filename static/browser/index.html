@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>badlavo Voice Test</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a2332;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --text: #e7ecf3;
+      --muted: #94a3b8;
+      --success: #22c55e;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+    .card {
+      width: 100%;
+      max-width: 480px;
+      background: var(--card);
+      border-radius: 16px;
+      padding: 2rem;
+      box-shadow: 0 20px 50px rgba(0,0,0,.4);
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 .25rem; }
+    .sub { color: var(--muted); font-size: .9rem; margin-bottom: 1.5rem; }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      padding: .75rem 1rem;
+      background: rgba(0,0,0,.25);
+      border-radius: 8px;
+      margin-bottom: 1.25rem;
+      font-size: .875rem;
+    }
+    .dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+    }
+    .dot.live { background: var(--success); animation: pulse 1.2s infinite; }
+    .dot.speaking { background: var(--accent); }
+    @keyframes pulse { 50% { opacity: .5; } }
+    button {
+      width: 100%;
+      padding: 1rem;
+      font-size: 1rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    #connectBtn {
+      background: var(--accent);
+      color: white;
+    }
+    #connectBtn:hover:not(:disabled) { background: var(--accent-hover); }
+    #connectBtn:disabled { opacity: .5; cursor: not-allowed; }
+    #connectBtn.active { background: var(--danger); }
+    .hints {
+      margin-top: 1.5rem;
+      padding-top: 1rem;
+      border-top: 1px solid rgba(255,255,255,.08);
+      font-size: .8rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .hints strong { color: var(--text); }
+    .log {
+      margin-top: .75rem;
+      font-size: .75rem;
+      color: var(--muted);
+      max-height: 4rem;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>badlavo Voice Test</h1>
+    <p class="sub">Talk to Aria, badlavo support — browser mic, no phone needed</p>
+
+    <div class="status">
+      <span class="dot" id="dot"></span>
+      <span id="statusText">Disconnected</span>
+    </div>
+
+    <button type="button" id="connectBtn">Start conversation</button>
+
+    <div class="log" id="log"></div>
+
+    <div class="hints">
+      <strong>Wait for Aria’s greeting</strong>, then ask:<br />
+      “What is the status of order 1569?”<br /><br />
+      Use headphones. Mic stays off until Aria finishes the greeting (stops false order IDs).
+    </div>
+  </div>
+
+  <script>
+    // Must match server: 16 kHz mic in, 24 kHz Gemini playback out
+    const CAPTURE_RATE = 16000;
+    const PLAYBACK_RATE = 24000;
+    const CAPTURE_BUFFER = 1024;
+
+    const dot = document.getElementById("dot");
+    const statusText = document.getElementById("statusText");
+    const connectBtn = document.getElementById("connectBtn");
+    const logEl = document.getElementById("log");
+
+    let ws = null;
+    let audioContext = null;
+    let nativeRate = CAPTURE_RATE;
+    let mediaStream = null;
+    let processor = null;
+    let source = null;
+    let nextPlayTime = 0;
+    let playbackEndTimer = null;
+    let aiSpeaking = false;
+    let audioChunks = 0;
+    let micActive = false;
+    let awaitingGreetingEnd = false;
+    let micEnableFallbackTimer = null;
+    let keepaliveTimer = null;
+
+    function log(msg) {
+      console.log(msg);
+      logEl.textContent = msg;
+    }
+
+    function wsUrl() {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      return `${proto}//${location.host}/browser/ws`;
+    }
+
+    function setStatus(text, state = "idle") {
+      statusText.textContent = text;
+      dot.className = "dot" + (state === "live" ? " live" : state === "speaking" ? " speaking" : "");
+    }
+
+    function resample(input, fromRate, toRate) {
+      if (fromRate === toRate) return input;
+      const ratio = fromRate / toRate;
+      const outLen = Math.max(1, Math.round(input.length / ratio));
+      const out = new Float32Array(outLen);
+      for (let i = 0; i < outLen; i++) {
+        const pos = i * ratio;
+        const idx = Math.floor(pos);
+        const frac = pos - idx;
+        const a = input[idx] ?? 0;
+        const b = input[idx + 1] ?? a;
+        out[i] = a + frac * (b - a);
+      }
+      return out;
+    }
+
+    function floatTo16BitPCM(float32) {
+      const out = new Int16Array(float32.length);
+      for (let i = 0; i < float32.length; i++) {
+        const s = Math.max(-1, Math.min(1, float32[i]));
+        out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      return out.buffer;
+    }
+
+    function pcm16ToFloat32(arrayBuffer) {
+      const int16 = new Int16Array(arrayBuffer);
+      const float32 = new Float32Array(int16.length);
+      for (let i = 0; i < int16.length; i++) {
+        float32[i] = int16[i] / (int16[i] < 0 ? 0x8000 : 0x7fff);
+      }
+      return float32;
+    }
+
+    function schedulePlaybackEnd(durationSec) {
+      if (playbackEndTimer) clearTimeout(playbackEndTimer);
+      const endAt = (nextPlayTime - audioContext.currentTime) + durationSec + 0.08;
+      playbackEndTimer = setTimeout(() => {
+        if (audioContext && nextPlayTime <= audioContext.currentTime + 0.05) {
+          aiSpeaking = false;
+          if (awaitingGreetingEnd) {
+            awaitingGreetingEnd = false;
+            micActive = true;
+            if (micEnableFallbackTimer) clearTimeout(micEnableFallbackTimer);
+            log("Greeting done — speak now (hello, order number, or your question)");
+          }
+          setStatus("Connected — speak now", "live");
+        }
+      }, Math.max(50, endAt * 1000));
+    }
+
+    /** Gapless PCM16 scheduling — avoids choppy per-chunk WAV decode. */
+    function enqueuePcm16(arrayBuffer) {
+      if (!audioContext || !arrayBuffer.byteLength) return;
+
+      const float32 = pcm16ToFloat32(arrayBuffer);
+      const buf = audioContext.createBuffer(1, float32.length, PLAYBACK_RATE);
+      buf.copyToChannel(float32, 0);
+
+      const now = audioContext.currentTime;
+      if (nextPlayTime < now) nextPlayTime = now + 0.02;
+
+      const node = audioContext.createBufferSource();
+      node.buffer = buf;
+      node.connect(audioContext.destination);
+      node.start(nextPlayTime);
+
+      const duration = buf.duration;
+      nextPlayTime += duration;
+      schedulePlaybackEnd(duration);
+
+      if (!aiSpeaking) {
+        aiSpeaking = true;
+        setStatus("Aria speaking…", "speaking");
+      }
+    }
+
+    async function start() {
+      connectBtn.disabled = true;
+      setStatus("Requesting microphone…");
+
+      audioContext = new AudioContext({ latencyHint: "interactive" });
+      await audioContext.resume();
+      nativeRate = audioContext.sampleRate;
+      nextPlayTime = audioContext.currentTime;
+      log(`Mic ${nativeRate} Hz → ${CAPTURE_RATE} Hz | playback ${PLAYBACK_RATE} Hz`);
+
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+        },
+      });
+
+      ws = new WebSocket(wsUrl());
+      ws.binaryType = "arraybuffer";
+
+      ws.onopen = () => {
+        setStatus("Connected — wait for Aria…", "live");
+        connectBtn.textContent = "End conversation";
+        connectBtn.classList.add("active");
+        connectBtn.disabled = false;
+        micActive = false;
+        awaitingGreetingEnd = true;
+
+        source = audioContext.createMediaStreamSource(mediaStream);
+        processor = audioContext.createScriptProcessor(CAPTURE_BUFFER, 1, 1);
+        processor.onaudioprocess = (e) => {
+          if (!micActive || ws.readyState !== WebSocket.OPEN) return;
+          let samples = e.inputBuffer.getChannelData(0);
+          if (nativeRate !== CAPTURE_RATE) {
+            samples = resample(samples, nativeRate, CAPTURE_RATE);
+          }
+          ws.send(floatTo16BitPCM(samples));
+        };
+        const mute = audioContext.createGain();
+        mute.gain.value = 0;
+        source.connect(processor);
+        processor.connect(mute);
+        mute.connect(audioContext.destination);
+
+        micEnableFallbackTimer = setTimeout(() => {
+          if (!micActive) {
+            micActive = true;
+            awaitingGreetingEnd = false;
+            log("Mic on — speak now");
+            setStatus("Connected — speak now", "live");
+          }
+        }, 9000);
+
+        keepaliveTimer = setInterval(() => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "ping" }));
+          }
+        }, 25000);
+      };
+
+      ws.onmessage = async (ev) => {
+        if (typeof ev.data === "string") {
+          log("Server: " + ev.data);
+          return;
+        }
+        await audioContext.resume();
+        audioChunks++;
+        if (audioChunks === 1) log("Streaming Aria (24 kHz)…");
+        enqueuePcm16(ev.data);
+      };
+
+      ws.onerror = () => {
+        setStatus("WebSocket error");
+        log("WebSocket error — is the server running?");
+      };
+      ws.onclose = (ev) => {
+        const reason = ev.reason ? ` (${ev.reason})` : "";
+        log(`Connection closed code=${ev.code}${reason}`);
+        stop(false);
+      };
+    }
+
+    function stop(userInitiated = true) {
+      if (playbackEndTimer) clearTimeout(playbackEndTimer);
+      if (micEnableFallbackTimer) clearTimeout(micEnableFallbackTimer);
+      if (keepaliveTimer) { clearInterval(keepaliveTimer); keepaliveTimer = null; }
+      if (processor) { processor.disconnect(); processor = null; }
+      if (source) { source.disconnect(); source = null; }
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((t) => t.stop());
+        mediaStream = null;
+      }
+      if (ws) { ws.close(); ws = null; }
+      if (audioContext) { audioContext.close(); audioContext = null; }
+      nextPlayTime = 0;
+      aiSpeaking = false;
+      audioChunks = 0;
+      micActive = false;
+      awaitingGreetingEnd = false;
+      connectBtn.textContent = "Start conversation";
+      connectBtn.classList.remove("active");
+      connectBtn.disabled = false;
+      setStatus(
+        userInitiated
+          ? "Disconnected"
+          : "Connection lost — click Start conversation to reconnect"
+      );
+    }
+
+    connectBtn.addEventListener("click", () => {
+      if (ws) stop();
+      else start().catch((err) => {
+        console.error(err);
+        setStatus("Mic error — check permissions");
+        log(err.message || String(err));
+        connectBtn.disabled = false;
+      });
+    });
+  </script>
+</body>
+</html>
