@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Order confirmation calls — badlavo</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a2332;
+      --accent: #8b5cf6;
+      --accent-hover: #7c3aed;
+      --text: #e7ecf3;
+      --muted: #94a3b8;
+      --success: #22c55e;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --border: rgba(255,255,255,.1);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 1.5rem;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+    .sub { color: var(--muted); font-size: .9rem; margin-bottom: 1.25rem; }
+    .nav { font-size: .85rem; margin-bottom: 1rem; }
+    .nav a { color: var(--accent); text-decoration: none; margin-right: 1rem; }
+    .nav a:hover { text-decoration: underline; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .75rem;
+      align-items: center;
+      margin-bottom: 1.25rem;
+      padding: 1rem;
+      background: var(--card);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+    }
+    button, .btn {
+      padding: .6rem 1.1rem;
+      font-size: .9rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      background: var(--accent);
+      color: #fff;
+    }
+    button:hover:not(:disabled) { background: var(--accent-hover); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    button.secondary { background: rgba(255,255,255,.1); color: var(--text); }
+    button.danger { background: var(--danger); }
+    .stats {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-left: auto;
+      font-size: .85rem;
+      color: var(--muted);
+    }
+    .stats strong { color: var(--text); }
+    .banner {
+      padding: .75rem 1rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      font-size: .875rem;
+      display: none;
+    }
+    .banner.show { display: block; }
+    .banner.info { background: rgba(139,92,246,.15); border: 1px solid var(--accent); }
+    .banner.ok { background: rgba(34,197,94,.15); border: 1px solid var(--success); }
+    .banner.err { background: rgba(239,68,68,.15); border: 1px solid var(--danger); }
+    section {
+      background: var(--card);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      margin-bottom: 1.25rem;
+      overflow: hidden;
+    }
+    section h2 {
+      margin: 0;
+      padding: .85rem 1rem;
+      font-size: 1rem;
+      border-bottom: 1px solid var(--border);
+      background: rgba(0,0,0,.2);
+    }
+    table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    th, td { padding: .65rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; font-size: .75rem; text-transform: uppercase; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,.03); }
+    input[type="tel"], input[type="text"] {
+      width: 100%;
+      min-width: 120px;
+      padding: .4rem .55rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: rgba(0,0,0,.3);
+      color: var(--text);
+      font-size: .85rem;
+    }
+    .tag { display: inline-block; padding: .15rem .45rem; border-radius: 4px; font-size: .7rem; background: rgba(255,255,255,.08); margin: .1rem; }
+    .pill {
+      display: inline-block;
+      padding: .2rem .5rem;
+      border-radius: 999px;
+      font-size: .7rem;
+      font-weight: 600;
+    }
+    .pill.ready { background: rgba(34,197,94,.2); color: var(--success); }
+    .pill.wait { background: rgba(245,158,11,.2); color: var(--warn); }
+    .pill.skip { background: rgba(148,163,184,.2); color: var(--muted); }
+    .pill.dialing { background: rgba(139,92,246,.25); color: var(--accent); }
+    .empty { padding: 2rem; text-align: center; color: var(--muted); }
+    .hint {
+      padding: .75rem 1rem;
+      font-size: .8rem;
+      color: var(--muted);
+      line-height: 1.5;
+      border-top: 1px solid var(--border);
+    }
+    .log {
+      margin-top: 1rem;
+      padding: 1rem;
+      background: rgba(0,0,0,.35);
+      border-radius: 8px;
+      font-size: .75rem;
+      color: var(--muted);
+      max-height: 160px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      font-family: ui-monospace, monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <p class="nav">
+      <a href="/browser">Inbound test</a>
+      <a href="/browser/outbound">Browser outbound</a>
+      <a href="/docs">API docs</a>
+    </p>
+    <h1>Order confirmation calls</h1>
+    <p class="sub">
+      Unfulfilled Shopify orders without <strong>AI Confirmed</strong> / <strong>confirmed</strong> tags.
+      Use <strong>Call customer</strong> per row or <strong>Call all ready</strong> for batch Exotel dials.
+    </p>
+
+    <div id="banner" class="banner"></div>
+
+    <div class="toolbar">
+      <button type="button" id="refreshBtn">Refresh list</button>
+      <button type="button" id="callAllBtn" class="danger">Call all ready</button>
+      <button type="button" id="previewBtn" class="secondary">Preview batch (dry run)</button>
+      <label style="font-size:.8rem;color:var(--muted)">
+        Limit
+        <input type="number" id="limitInput" value="30" min="1" max="50" style="width:4rem;margin-left:.35rem" />
+      </label>
+      <div class="stats">
+        <span>Need call: <strong id="statPending">—</strong></span>
+        <span>Skipped: <strong id="statSkipped">—</strong></span>
+        <span>Provider: <strong id="statProvider">—</strong></span>
+      </div>
+    </div>
+
+    <section>
+      <h2>Ready to call — not confirmed</h2>
+      <div id="pendingWrap">
+        <table id="pendingTable">
+          <thead>
+            <tr>
+              <th>Order</th>
+              <th>Total</th>
+              <th>Tags</th>
+              <th>Phone (edit if empty)</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="pendingBody"></tbody>
+        </table>
+        <div id="pendingEmpty" class="empty" style="display:none">No orders need confirmation right now.</div>
+      </div>
+      <p class="hint">
+        If phone is empty, Shopify API may not return it (Basic plan / incomplete address). Enter the number from Admin, then call.
+      </p>
+    </section>
+
+    <section>
+      <h2>Skipped — already confirmed or cannot call</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Order</th>
+            <th>Tags</th>
+            <th>Reason</th>
+          </tr>
+        </thead>
+        <tbody id="skippedBody"></tbody>
+      </table>
+      <div id="skippedEmpty" class="empty" style="display:none">Nothing skipped.</div>
+    </section>
+
+    <div class="log" id="log"></div>
+  </div>
+
+  <script>
+    const pendingBody = document.getElementById("pendingBody");
+    const skippedBody = document.getElementById("skippedBody");
+    const pendingEmpty = document.getElementById("pendingEmpty");
+    const skippedEmpty = document.getElementById("skippedEmpty");
+    const banner = document.getElementById("banner");
+    const logEl = document.getElementById("log");
+    const callAllBtn = document.getElementById("callAllBtn");
+    const refreshBtn = document.getElementById("refreshBtn");
+    const previewBtn = document.getElementById("previewBtn");
+    const limitInput = document.getElementById("limitInput");
+
+    let pendingRows = [];
+    let calling = false;
+
+    function log(msg) {
+      const t = new Date().toLocaleTimeString();
+      logEl.textContent = `[${t}] ${msg}\n` + logEl.textContent;
+    }
+
+    function showBanner(text, type = "info") {
+      banner.textContent = text;
+      banner.className = `banner show ${type}`;
+    }
+
+    function tagsHtml(tags) {
+      if (!tags || !tags.length) return "<span class='muted'>—</span>";
+      return tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("");
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement("div");
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function getPhoneInput(orderId) {
+      return document.querySelector(`input[data-phone-for="${orderId}"]`);
+    }
+
+    async function loadList() {
+      refreshBtn.disabled = true;
+      const limit = parseInt(limitInput.value, 10) || 30;
+      try {
+        const res = await fetch(`/api/shopify/confirmation/pending?limit=${limit}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || res.statusText);
+
+        pendingRows = data.pending || [];
+        renderPending(pendingRows);
+        renderSkipped(data.skipped || []);
+
+        document.getElementById("statPending").textContent = data.pending_count ?? pendingRows.length;
+        document.getElementById("statSkipped").textContent = data.skipped_count ?? 0;
+
+        const health = await fetch("/health").then((r) => r.json());
+        document.getElementById("statProvider").textContent = health.telephony_provider || "—";
+        if (!health.telephony_configured) {
+          showBanner("Set PUBLIC_WS_URL (ngrok) in .env so Exotel can connect audio.", "err");
+        } else {
+          showBanner(`Loaded ${pendingRows.length} order(s) ready to call.`, "info");
+        }
+        log(`Refreshed: ${pendingRows.length} pending, ${data.skipped_count} skipped`);
+      } catch (e) {
+        showBanner("Failed to load: " + e.message, "err");
+        log("Error: " + e.message);
+      } finally {
+        refreshBtn.disabled = false;
+      }
+    }
+
+    function renderPending(rows) {
+      pendingBody.innerHTML = "";
+      pendingEmpty.style.display = rows.length ? "none" : "block";
+      document.getElementById("pendingTable").style.display = rows.length ? "table" : "none";
+
+      for (const row of rows) {
+        const tr = document.createElement("tr");
+        const phoneVal = row.phone || "";
+        tr.innerHTML = `
+          <td><strong>#${escapeHtml(row.order_id)}</strong></td>
+          <td>₹${Number(row.total_inr || 0).toFixed(0)}</td>
+          <td>${tagsHtml(row.tags)}</td>
+          <td>
+            <input type="tel" data-phone-for="${escapeHtml(row.order_id)}"
+              placeholder="10-digit mobile" value="${escapeHtml(phoneVal)}" />
+          </td>
+          <td>
+            <span class="pill ${row.can_dial ? "ready" : "wait"}">${row.can_dial ? "Ready" : "Need phone"}</span>
+            <button type="button" class="btn call-one" data-order="${escapeHtml(row.order_id)}" style="margin-top:.35rem;width:100%">
+              Call customer
+            </button>
+          </td>
+        `;
+        pendingBody.appendChild(tr);
+      }
+
+      pendingBody.querySelectorAll(".call-one").forEach((btn) => {
+        btn.addEventListener("click", () => callOne(btn.dataset.order, btn));
+      });
+      pendingBody.querySelectorAll("input[data-phone-for]").forEach((inp) => {
+        inp.addEventListener("input", () => {
+          const pill = inp.closest("tr").querySelector(".pill");
+          if (inp.value.trim()) {
+            pill.className = "pill ready";
+            pill.textContent = "Ready";
+          } else {
+            pill.className = "pill wait";
+            pill.textContent = "Need phone";
+          }
+        });
+      });
+    }
+
+    function renderSkipped(rows) {
+      skippedBody.innerHTML = "";
+      skippedEmpty.style.display = rows.length ? "none" : "block";
+      for (const row of rows) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>#${escapeHtml(row.order_id)}</td>
+          <td>${tagsHtml(row.tags)}</td>
+          <td><span class="pill skip">${escapeHtml(row.reason || "")}</span></td>
+        `;
+        skippedBody.appendChild(tr);
+      }
+    }
+
+    async function callOne(orderId, btn) {
+      const phoneInp = getPhoneInput(orderId);
+      const phone = (phoneInp && phoneInp.value.trim()) || "";
+      if (!phone) {
+        showBanner(`Enter phone for order #${orderId} first.`, "err");
+        return;
+      }
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Dialing…";
+      }
+      try {
+        const res = await fetch("/api/outbound/confirm-order", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ order_id: orderId, phone }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+
+        if (data.status === "skipped") {
+          showBanner(`#${orderId}: ${data.reason}`, "err");
+          log(`Skip #${orderId}: ${data.reason}`);
+        } else {
+          showBanner(`Calling #${orderId} → ${data.to || phone}`, "ok");
+          log(`Dial #${orderId} session=${data.session_id || "—"} status=${data.status}`);
+          if (btn) {
+            btn.textContent = "Dialing…";
+            btn.closest("tr").querySelector(".pill").className = "pill dialing";
+            btn.closest("tr").querySelector(".pill").textContent = "In progress";
+          }
+        }
+      } catch (e) {
+        showBanner(`Call failed #${orderId}: ${e.message}`, "err");
+        log(`Error #${orderId}: ${e.message}`);
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "Call customer";
+        }
+      }
+    }
+
+    async function callAllReady() {
+      if (calling) return;
+      const ready = [];
+      for (const row of pendingRows) {
+        const inp = getPhoneInput(row.order_id);
+        const phone = (inp && inp.value.trim()) || (row.phone || "").trim();
+        if (phone) ready.push({ order_id: row.order_id, phone });
+      }
+      if (!ready.length) {
+        showBanner("No orders with phone numbers. Fill phone column first.", "err");
+        return;
+      }
+      if (!confirm(`Place ${ready.length} outbound confirmation call(s)?`)) return;
+
+      calling = true;
+      callAllBtn.disabled = true;
+      let ok = 0;
+      let fail = 0;
+
+      for (let i = 0; i < ready.length; i++) {
+        const { order_id, phone } = ready[i];
+        showBanner(`Calling ${i + 1} / ${ready.length}: #${order_id}…`, "info");
+        log(`Batch ${i + 1}/${ready.length} → #${order_id}`);
+        try {
+          const res = await fetch("/api/outbound/confirm-order", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ order_id, phone }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+          if (data.status === "dialing") ok++;
+          else {
+            fail++;
+            log(`  skipped: ${data.reason || data.status}`);
+          }
+        } catch (e) {
+          fail++;
+          log(`  error: ${e.message}`);
+        }
+        if (i < ready.length - 1) await new Promise((r) => setTimeout(r, 2500));
+      }
+
+      showBanner(`Batch done: ${ok} dialed, ${fail} skipped/failed. Refreshing…`, ok ? "ok" : "err");
+      calling = false;
+      callAllBtn.disabled = false;
+      await loadList();
+    }
+
+    async function dryRunBatch() {
+      const limit = parseInt(limitInput.value, 10) || 30;
+      try {
+        const res = await fetch(
+          `/api/shopify/confirmation/scan-unfulfilled?limit=${limit}&dry_run=true`,
+          { method: "POST" }
+        );
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || res.statusText);
+        const would = (data.results || []).filter((r) => r.status === "would_dial").length;
+        showBanner(`Dry run: ${would} of ${data.scanned} would be dialed (API phone only).`, "info");
+        log(JSON.stringify(data, null, 2));
+      } catch (e) {
+        showBanner("Dry run failed: " + e.message, "err");
+      }
+    }
+
+    refreshBtn.addEventListener("click", loadList);
+    callAllBtn.addEventListener("click", callAllReady);
+    previewBtn.addEventListener("click", dryRunBatch);
+    loadList();
+  </script>
+</body>
+</html>

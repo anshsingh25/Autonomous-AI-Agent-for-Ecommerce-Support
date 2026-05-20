@@ -47,6 +47,13 @@ class OrderService:
     def __init__(self, database: OrderRepository | None = None) -> None:
         self._db = database or create_order_repository(get_settings())
 
+    async def get_customer_phone(self, order_id: str) -> str | None:
+        """Phone on file for outbound calls."""
+        order = await self._db.get_order(order_id)
+        if not order or not order.phone:
+            return None
+        return order.phone.strip() or None
+
     async def get_order_status(self, order_id: str) -> dict[str, Any]:
         order = await self._db.get_order(order_id)
         if not order:

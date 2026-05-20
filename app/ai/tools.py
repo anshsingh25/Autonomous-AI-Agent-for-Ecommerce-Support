@@ -10,6 +10,7 @@ from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.services.llm_service import FunctionCallParams, LLMService
 
 from app.ai.tool_guards import normalize_order_id, reject_tool_without_customer_order_id
+from app.ai.tool_hold import speak_tool_hold
 from app.services.order_service import OrderService, order_service
 
 logger = logging.getLogger(__name__)
@@ -23,8 +24,8 @@ def build_tools_schema() -> ToolsSchema:
                 name="get_order_status",
                 description=(
                     "Look up order status and delivery/shipping address ONLY after the customer "
-                    "said their order number aloud. Use for status, items, and 'what is my "
-                    "delivery address' questions. Never guess or use example IDs."
+                    "said their order number aloud. Before calling, tell them to wait while you "
+                    "pull up the order. Never guess or use example IDs."
                 ),
                 properties={
                     "order_id": {
@@ -36,7 +37,10 @@ def build_tools_schema() -> ToolsSchema:
             ),
             FunctionSchema(
                 name="refund_status",
-                description="Refund status — only after customer stated their order number.",
+                description=(
+                    "Refund status — only after customer stated their order number. "
+                    "Tell them you are checking refund status before calling."
+                ),
                 properties={
                     "order_id": {
                         "type": "string",
@@ -47,7 +51,10 @@ def build_tools_schema() -> ToolsSchema:
             ),
             FunctionSchema(
                 name="cancel_order",
-                description="Cancel an order when the customer explicitly requests cancellation.",
+                description=(
+                    "Cancel an order when the customer explicitly requests cancellation. "
+                    "Tell them to wait while you process the cancellation before calling."
+                ),
                 properties={
                     "order_id": {
                         "type": "string",
@@ -62,7 +69,10 @@ def build_tools_schema() -> ToolsSchema:
             ),
             FunctionSchema(
                 name="track_order",
-                description="Tracking — only after customer stated their order number.",
+                description=(
+                    "Tracking — only after customer stated their order number. "
+                    "Tell them to wait while you check tracking before calling."
+                ),
                 properties={
                     "order_id": {
                         "type": "string",
@@ -87,6 +97,7 @@ def register_ecommerce_tools(llm: LLMService, service: OrderService | None = Non
 
     async def _safe_result(params: FunctionCallParams, fn, tool_name: str) -> None:
         try:
+            await speak_tool_hold(params)
             await fn(params)
         except Exception:
             logger.exception("Tool %s failed", tool_name)

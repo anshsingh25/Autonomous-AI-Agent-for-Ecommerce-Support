@@ -11,7 +11,7 @@ ensure_nltk_data()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import browser, orders, voice
+from app.routes import browser, orders, outbound, shopify_webhooks, voice
 from app.utils.config import get_settings
 from app.utils.logging import setup_logging
 
@@ -50,7 +50,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
         title=settings.app_name,
-        description="Realtime ecommerce voice assistant powered by Pipecat, Twilio, and Gemini",
+        description="Ecommerce voice agent: inbound support and outbound order confirmation",
         version="1.0.0",
         lifespan=lifespan,
     )
@@ -65,6 +65,8 @@ def create_app() -> FastAPI:
 
     app.include_router(browser.router)
     app.include_router(voice.router)
+    app.include_router(outbound.router)
+    app.include_router(shopify_webhooks.router)
     app.include_router(orders.router)
 
     @app.get("/")
@@ -73,9 +75,16 @@ def create_app() -> FastAPI:
             "service": settings.app_name,
             "docs": "/docs",
             "browser_voice_test": "/browser",
-            "voice_webhook": "/voice/incoming",
-            "twilio_websocket": "/voice/ws",
+            "browser_outbound_test": "/browser/outbound",
+            "confirmation_calls_desk": "/browser/confirmation-desk",
+            "voice_webhook_inbound": "/voice/incoming",
+            "voice_websocket": "/voice/ws",
+            "outbound_confirm_call": "POST /api/outbound/confirm-order",
+            "shopify_webhook_orders_paid": "POST /api/shopify/webhooks/orders-paid",
+            "shopify_pending_confirmation": "GET /api/shopify/confirmation/pending",
+            "shopify_scan_unfulfilled": "POST /api/shopify/confirmation/scan-unfulfilled?dry_run=true",
             "browser_websocket": "/browser/ws",
+            "browser_outbound_websocket": "/browser/outbound/ws?session_id=...",
             "sample_orders": ["ORD-1001", "ORD-1002", "ORD-1003"],
         }
 
@@ -88,7 +97,9 @@ def create_app() -> FastAPI:
                 settings.shopify_shop_domain and settings.shopify_access_token
             ),
             "store_api_configured": bool(settings.store_api_base_url),
-            "twilio_configured": bool(settings.public_ws_url),
+            "telephony_provider": settings.telephony_provider,
+            "telephony_configured": bool(settings.public_ws_url),
+            "auto_confirmation_enabled": settings.auto_confirmation_enabled,
         }
 
     return app

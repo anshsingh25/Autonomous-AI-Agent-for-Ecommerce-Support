@@ -33,3 +33,6 @@ nltk_data/
 
 # Logs
 *.log
+
+# Misc
+get-pip.py

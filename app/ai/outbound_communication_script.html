@@ -1,0 +1,744 @@
+
+<style>
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);}
+.wrap{padding:.75rem 0;font-size:14px;}
+.tabs{display:flex;gap:0;border-bottom:0.5px solid var(--color-border-tertiary);margin-bottom:1rem;overflow-x:auto;}
+.tab{padding:8px 16px;font-size:13px;font-weight:500;cursor:pointer;border-bottom:2px solid transparent;color:var(--color-text-secondary);white-space:nowrap;transition:all .15s;flex-shrink:0;}
+.tab.on{color:var(--color-text-primary);border-bottom-color:var(--color-text-primary);}
+.tab:hover:not(.on){color:var(--color-text-primary);}
+.pane{display:none;} .pane.on{display:block;}
+.card{border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);margin-bottom:8px;overflow:hidden;background:var(--color-background-primary);}
+.ch{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;border-bottom:0.5px solid var(--color-border-tertiary);}
+.ch:hover{background:var(--color-background-secondary);}
+.ci{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:middle;font-size:14px;flex-shrink:0;display:flex;align-items:center;justify-content:center;}
+.ctitle{font-weight:500;font-size:13px;flex:1;}
+.ctag{font-size:10px;padding:2px 8px;border-radius:20px;font-weight:500;flex-shrink:0;}
+.cch{color:var(--color-text-secondary);font-size:13px;transition:transform .2s;flex-shrink:0;}
+.cch.open{transform:rotate(180deg);}
+.cb{padding:14px 16px;display:none;}
+.cb.open{display:block;}
+.speaker{font-size:10px;font-weight:500;letter-spacing:.7px;text-transform:uppercase;margin-bottom:3px;}
+.bubble{border-radius:0 8px 8px 8px;padding:10px 13px;font-size:13px;line-height:1.65;margin-bottom:8px;border:0.5px solid var(--color-border-tertiary);}
+.bubble-agent{background:var(--color-background-secondary);border-left:3px solid #185FA5;}
+.bubble-customer{background:var(--color-background-primary);border-left:3px solid #1D9E75;margin-left:16px;}
+.bubble-note{background:var(--color-background-warning);border-left:3px solid #BA7517;font-size:12px;color:var(--color-text-warning);}
+.bubble-system{background:var(--color-background-info);border-left:3px solid #185FA5;font-size:11px;color:var(--color-text-info);font-style:italic;}
+.ph{background:var(--color-background-info);color:var(--color-text-info);border-radius:3px;padding:0 4px;font-size:12px;font-weight:500;}
+.tip{display:flex;gap:7px;font-size:12px;color:var(--color-text-secondary);border-top:0.5px solid var(--color-border-tertiary);margin-top:10px;padding-top:10px;}
+.tip i{font-size:14px;flex-shrink:0;margin-top:2px;}
+.warn{background:var(--color-background-warning);border:0.5px solid var(--color-border-warning);border-radius:6px;padding:8px 12px;font-size:12px;color:var(--color-text-warning);margin-bottom:10px;display:flex;gap:7px;}
+.warn i{flex-shrink:0;font-size:14px;margin-top:1px;}
+.ok{background:var(--color-background-success);border:0.5px solid var(--color-border-success);border-radius:6px;padding:8px 12px;font-size:12px;color:var(--color-text-success);margin-bottom:10px;display:flex;gap:7px;}
+.ok i{flex-shrink:0;font-size:14px;margin-top:1px;}
+.tag{font-size:11px;font-weight:500;padding:3px 10px;border-radius:20px;}
+.tag-g{background:var(--color-background-success);color:var(--color-text-success);border:0.5px solid var(--color-border-success);}
+.tag-r{background:var(--color-background-danger);color:var(--color-text-danger);border:0.5px solid var(--color-border-danger);}
+.tag-o{background:var(--color-background-warning);color:var(--color-text-warning);border:0.5px solid var(--color-border-warning);}
+.tag-b{background:var(--color-background-info);color:var(--color-text-info);border:0.5px solid var(--color-border-info);}
+.tag-row{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;}
+.divlabel{font-size:10px;font-weight:500;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:.8px;margin:12px 0 7px;display:flex;align-items:center;gap:7px;}
+.divlabel::after{content:'';flex:1;height:.5px;background:var(--color-border-tertiary);}
+.search-bar{display:flex;align-items:center;gap:8px;background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:8px 12px;margin-bottom:12px;}
+.search-bar i{color:var(--color-text-secondary);font-size:16px;}
+.search-bar input{border:none;background:transparent;outline:none;font-size:13px;color:var(--color-text-primary);width:100%;}
+.search-bar input::placeholder{color:var(--color-text-secondary);}
+.cnt{font-size:11px;color:var(--color-text-secondary);margin-bottom:8px;}
+</style>
+
+<div class="wrap">
+<h2 class="sr-only">Complete outbound order confirmation communication script — all scenarios with order review before confirmation</h2>
+
+<div class="tabs">
+  <div class="tab on" onclick="sw('main',this)">Core flow</div>
+  <div class="tab" onclick="sw('update',this)">Order updates</div>
+  <div class="tab" onclick="sw('cancel',this)">Cancel scenarios</div>
+  <div class="tab" onclick="sw('noans',this)">No answer</div>
+  <div class="tab" onclick="sw('edge',this)">Edge cases</div>
+  <div class="tab" onclick="sw('hindi',this)">Hindi scripts</div>
+</div>
+
+<!-- ══════════════ CORE FLOW ══════════════ -->
+<div class="pane on" id="main">
+
+  <div class="ok"><i class="ti ti-info-circle" aria-hidden="true"></i> The core flow has 4 mandatory phases — Opening → Order Review → Update Check → Final Confirmation. Never skip the Order Review phase even if the customer seems ready to confirm.</div>
+
+  <!-- PHASE 1 -->
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#E1F5EE;"><i class="ti ti-phone-outgoing" style="color:#0F6E56;" aria-hidden="true"></i></div>
+      <div class="ctitle">Phase 1 — Opening (intro + language)</div>
+      <span class="ctag" style="background:#E1F5EE;color:#0F6E56;">Always first</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb open">
+      <div class="divlabel">step 1 — introduce and ask language (do not ask "Am I speaking with…?")</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Hi! This is Aria calling from <span class="ph">[Brand Name]</span>. Which language are you comfortable with — English or Hindi?"</div>
+
+      <div class="divlabel">if English</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"English."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"I'm calling about your recent order, <span class="ph">[Name]</span>. Do you have about a minute? I just want to quickly go over your order details and confirm everything is correct before we dispatch it."</div>
+
+      <div class="divlabel">if Hindi</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Hindi."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Main aapke recent order ke baare mein call kar rahi hoon, <span class="ph">[Name]</span>. Kya aapke paas ek minute hai? Main order ki details confirm karna chahti hoon dispatch se pehle."</div>
+
+      <div class="divlabel">if they say not a good time</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"I'm busy right now."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Absolutely no problem! When would be a good time to call you back — morning or afternoon tomorrow?"</div>
+      <div class="bubble bubble-note"><i class="ti ti-tag" aria-hidden="true"></i> Log: Scheduled callback. Tag: <span class="tag tag-o">Retry Call</span></div>
+
+      <div class="divlabel">if wrong person answers</div>
+      <div class="speaker" style="color:#1D9E75;">Other person</div>
+      <div class="bubble bubble-customer">"He's not available right now."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"No problem! Could you let <span class="ph">[Name]</span> know that Aria from <span class="ph">[Brand]</span> called about their order and to call us back on <span class="ph">[number]</span>? Or if you're family, I can also quickly go over the order details with you if that helps."</div>
+      <div class="tip"><i class="ti ti-check" aria-hidden="true"></i> Do not ask "Am I speaking with [name]?" — go straight to brand intro and language choice. Match their language for the rest of the call.</div>
+    </div>
+  </div>
+
+  <!-- PHASE 2 -->
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#E6F1FB;"><i class="ti ti-clipboard-list" style="color:#185FA5;" aria-hidden="true"></i></div>
+      <div class="ctitle">Phase 2 — Order review (read all details aloud)</div>
+      <span class="ctag" style="background:#E6F1FB;color:#185FA5;">Never skip this</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb open">
+      <div class="ok"><i class="ti ti-info-circle" aria-hidden="true"></i> Always read the full order details before asking for confirmation. This is the most important phase — it catches wrong items, wrong addresses, and prevents RTO before dispatch.</div>
+
+      <div class="divlabel">read the complete order</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Great! So let me quickly read out your order details. You've ordered <span class="ph">[Product Name]</span>, <span class="ph">[Quantity]</span> piece — <span class="ph">[Color / Size / Variant]</span>. The total amount is ₹<span class="ph">[Amount]</span> <span class="ph">[payable at delivery / already paid]</span>. And the delivery address we have is <span class="ph">[City and State only]</span>. Does everything sound correct so far?"</div>
+
+      <div class="divlabel">customer says yes</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Yes, that's correct."</div>
+      <div class="speaker" style="color:#185FA5;">Aria — move to Phase 3</div>
+      <div class="bubble bubble-agent">"Perfect! Now before I confirm your order — would you like to make any changes? Like the quantity, colour, size, or the delivery address?"</div>
+
+      <div class="divlabel">customer says something is wrong</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Wait, I ordered 2 pieces, not 1."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Got it — let me note that you'd like 2 pieces instead of 1. The updated total would be ₹<span class="ph">[new amount]</span>. Is that correct? And shall I update the rest of the order as it is?"</div>
+      <div class="bubble bubble-note"><i class="ti ti-info-circle" aria-hidden="true"></i> Log the change. Update in Shopify. Then continue to Phase 3.</div>
+
+      <div class="tip"><i class="ti ti-star" aria-hidden="true"></i> Read city and state only — never read the full street address on call. If they need to verify the full address, ask them to confirm it. "Could you confirm the full address you'd like it delivered to?"</div>
+    </div>
+  </div>
+
+  <!-- PHASE 3 -->
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#FAEEDA;"><i class="ti ti-pencil" style="color:#854F0B;" aria-hidden="true"></i></div>
+      <div class="ctitle">Phase 3 — Update check (offer changes before locking)</div>
+      <span class="ctag" style="background:#FAEEDA;color:#854F0B;">Key step</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb open">
+      <div class="divlabel">standard update offer</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Before I confirm — would you like to update anything in your order? For example the quantity, colour, size, or the delivery address? This is the best time to make any changes since the order hasn't been packed yet."</div>
+
+      <div class="divlabel">if no changes needed</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"No, everything is fine."</div>
+      <div class="speaker" style="color:#185FA5;">Aria — move to Phase 4</div>
+      <div class="bubble bubble-agent">"Wonderful! And just to confirm the delivery address — we'll be delivering to <span class="ph">[City, State]</span>. Is that the right location?"</div>
+
+      <div class="divlabel">address confirmed — move to final confirmation</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Yes, that's right."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Perfect! And one last quick question — will someone be available at that address to receive the delivery?"</div>
+
+      <div class="divlabel">if COD order — clarify payment</div>
+      <div class="speaker" style="color:#185FA5;">Aria (COD only)</div>
+      <div class="bubble bubble-agent">"Just so you know — this is a Cash on Delivery order, so the delivery person will collect ₹<span class="ph">[Amount]</span> when they arrive. Please keep that amount ready. Is that all good?"</div>
+
+      <div class="divlabel">if prepaid order</div>
+      <div class="speaker" style="color:#185FA5;">Aria (Prepaid only)</div>
+      <div class="bubble bubble-agent">"Your payment of ₹<span class="ph">[Amount]</span> has already been received — so nothing to pay at delivery. You just need to be there to receive it!"</div>
+
+      <div class="tip"><i class="ti ti-check" aria-hidden="true"></i> The update check is what separates a good outbound call from a great one. It prevents wrong deliveries, size mismatches, and COD returns before they happen.</div>
+    </div>
+  </div>
+
+  <!-- PHASE 4 -->
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#EAF3DE;"><i class="ti ti-check" style="color:#3B6D11;" aria-hidden="true"></i></div>
+      <div class="ctitle">Phase 4 — Final confirmation (lock the order)</div>
+      <span class="ctag" style="background:#EAF3DE;color:#3B6D11;">Close here</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb open">
+      <div class="divlabel">final confirmation ask</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"So just to confirm everything — you've ordered <span class="ph">[Product]</span>, <span class="ph">[Quantity]</span> piece, <span class="ph">[Color/Size]</span>, total ₹<span class="ph">[Amount]</span>, delivering to <span class="ph">[City]</span>. Shall I go ahead and confirm this order?"</div>
+
+      <div class="divlabel">customer confirms</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Yes, confirm it."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Your order is confirmed! We'll get it packed and dispatched shortly. You'll receive an SMS with the tracking details once it ships. Thank you so much, <span class="ph">[Name]</span> — have a wonderful day!"</div>
+      <div class="tag-row"><span class="tag tag-g">Proceed</span><span class="tag tag-g">AI Confirmed</span></div>
+
+      <div class="divlabel">customer hesitates at final step</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Umm, let me think..."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Of course, take your time! I'll hold the order for 24 hours. I'll also send you a quick WhatsApp message with the order details so you can review it. Just reply CONFIRM whenever you're ready and we'll dispatch it right away!"</div>
+      <div class="tag-row"><span class="tag tag-o">Retry Call</span></div>
+
+      <div class="tip"><i class="ti ti-star" aria-hidden="true"></i> The final confirmation should always include: product + quantity + color/size + amount + city. Reading all 5 back gives the customer one last chance to catch any error and builds trust.</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════ ORDER UPDATES ══════════════ -->
+<div class="pane" id="update">
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#FAEEDA;"><i class="ti ti-ruler-2" style="color:#854F0B;" aria-hidden="true"></i></div>
+      <div class="ctitle">Customer wants to change size</div>
+      <span class="ctag" style="background:#FAEEDA;color:#854F0B;">Very common</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb open">
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Actually I want a medium size, not large."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Sure! Let me check if medium is available... <span class="ph">[pause]</span> Yes, medium is in stock! I've updated your order to medium. The price stays the same at ₹<span class="ph">[Amount]</span>. Is that all good?"</div>
+
+      <div class="divlabel">if requested size not available</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"I'm sorry — medium is currently out of stock. We do have small and extra-large available right now. Would either of those work for you, or would you prefer to cancel this order?"</div>
+
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"No, I specifically need medium. Cancel it then."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Absolutely understood. I've noted the cancellation. If you'd like, I can notify you as soon as medium is back in stock — would that be helpful?"</div>
+      <div class="tag-row"><span class="tag tag-r">CANCELLED!</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#EEEDFE;"><i class="ti ti-palette" style="color:#534AB7;" aria-hidden="true"></i></div>
+      <div class="ctitle">Customer wants to change colour / variant</div>
+      <span class="ctag" style="background:#EEEDFE;color:#534AB7;">Common</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb">
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Can I get it in black instead of blue?"</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Let me check stock for black... <span class="ph">[pause]</span> Yes! Black is available. I've updated your order to black. Everything else stays the same — ₹<span class="ph">[Amount]</span> delivering to <span class="ph">[City]</span>. Shall we confirm the updated order?"</div>
+
+      <div class="divlabel">if price difference on variant</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Black is available! Just so you know, the black variant is priced at ₹<span class="ph">[new amount]</span> — that's ₹<span class="ph">[difference]</span> more than the blue. Are you okay with that?"</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#E6F1FB;"><i class="ti ti-number" style="color:#185FA5;" aria-hidden="true"></i></div>
+      <div class="ctitle">Customer wants to change quantity</div>
+      <span class="ctag" style="background:#E6F1FB;color:#185FA5;">Common</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb">
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Actually can I get 2 of these instead of 1?"</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Absolutely! 2 pieces would bring your total to ₹<span class="ph">[new amount]</span>. <span class="ph">[For COD: that's the amount you'll pay at delivery]</span>. Shall I update the quantity to 2?"</div>
+
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Yes, update it to 2."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Done! Updated to 2 pieces, total ₹<span class="ph">[new amount]</span>. Now shall I go ahead and confirm the full order?"</div>
+
+      <div class="divlabel">customer wants to reduce quantity</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Actually just send me 1 piece, not 3."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Got it — reducing to 1 piece. Your new total is ₹<span class="ph">[new amount]</span>. <span class="ph">[If prepaid: the difference of ₹[X] will be refunded to your original payment method]</span>. Shall I confirm?"</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#E1F5EE;"><i class="ti ti-map-pin" style="color:#0F6E56;" aria-hidden="true"></i></div>
+      <div class="ctitle">Customer wants to change delivery address</div>
+      <span class="ctag" style="background:#E1F5EE;color:#0F6E56;">Critical — read back carefully</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb">
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"The address is wrong, can you change it?"</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Of course! Please go ahead and tell me the correct delivery address — house number, street, area, city, and pincode."</div>
+
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"42, Shivaji Nagar, Pune, Maharashtra 411005."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Let me read that back — 42, Shivaji Nagar, Pune, Maharashtra, pincode 411005. Is that correct?"</div>
+
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Yes, that's right."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Perfect! Address updated. Now shall I confirm the full order with this new address?"</div>
+      <div class="tip"><i class="ti ti-check" aria-hidden="true"></i> Always read the full address back character by character. One wrong pincode means failed delivery. This is the most critical verification step.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#FCEBEB;"><i class="ti ti-map-pins" style="color:#A32D2D;" aria-hidden="true"></i></div>
+      <div class="ctitle">Customer wants to ship to a different person</div>
+      <span class="ctag" style="background:#FCEBEB;color:#A32D2D;">Gift order</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb">
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Can you deliver it to my friend? It's a gift."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Of course! Happy to help with that. Could you give me your friend's name and their delivery address — house number, street, area, city, and pincode?"</div>
+
+      <div class="speaker" style="color:#185FA5;">Aria — after getting details</div>
+      <div class="bubble bubble-agent">"Got it. Delivering to <span class="ph">[Friend's Name]</span> at <span class="ph">[address]</span>. Just to confirm — should we include your name on the package or keep it as a surprise? And would you like a gift message added?"</div>
+
+      <div class="divlabel">invoice/price tag question</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Also — would you like the price invoice to be sent only to you and not included in the parcel? Many people prefer that for gifts."</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#EEEDFE;"><i class="ti ti-credit-card" style="color:#534AB7;" aria-hidden="true"></i></div>
+      <div class="ctitle">Customer wants to switch COD to prepaid</div>
+      <span class="ctag" style="background:#EEEDFE;color:#534AB7;">Conversion win</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb">
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Can I pay online instead of cash on delivery?"</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Absolutely — great choice! I'll note that you'd like to switch to online payment. Our team will send a payment link to your registered number <span class="ph">[phone]</span> within the next few minutes. Once you complete the payment, your order will be on priority dispatch. Does that work?"</div>
+
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Yes, send me the link."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Done! You'll receive the payment link shortly. Your order is confirmed and will be dispatched as soon as payment is received. Thank you, <span class="ph">[Name]</span> — have a great day!"</div>
+      <div class="tag-row"><span class="tag tag-g">Proceed</span><span class="tag tag-g">AI Confirmed</span><span class="tag tag-b">Payment Link Sent</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#EAF3DE;"><i class="ti ti-notes" style="color:#3B6D11;" aria-hidden="true"></i></div>
+      <div class="ctitle">Customer wants to add delivery instructions</div>
+      <span class="ctag" style="background:#EAF3DE;color:#3B6D11;">Helpful addition</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb">
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Please ask them to call before coming — I'm on the second floor."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Noted! I'm adding delivery instructions: call before arriving, second floor. Our delivery partner will see this when they arrive. Anything else before I confirm the order?"</div>
+
+      <div class="divlabel">common delivery instructions to handle</div>
+      <div class="bubble bubble-system">Leave at door · Call before arriving · Give to security/guard · Deliver before 6 PM · Leave with neighbour at flat [X] · Ring doorbell twice</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════ CANCEL SCENARIOS ══════════════ -->
+<div class="pane" id="cancel">
+
+  <div class="warn"><i class="ti ti-alert-triangle" aria-hidden="true"></i> Always ask WHY before cancelling. One question saves up to 20% of cancellations. Offer a fix. If the customer still wants to cancel — respect it immediately without pushing further.</div>
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#FCEBEB;"><i class="ti ti-x" style="color:#A32D2D;" aria-hidden="true"></i></div>
+      <div class="ctitle">Customer cancels — standard flow</div>
+      <span class="ctag" style="background:#FCEBEB;color:#A32D2D;">Ask why first</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb open">
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"I want to cancel this order."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Of course, I can help with that. Could I ask what changed? I just want to make sure it's not something we can fix for you — like a size, delivery date, or address issue."</div>
+
+      <div class="divlabel">if fixable reason — offer solution</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Delivery is taking too long."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"I completely understand! Standard delivery takes <span class="ph">[X days]</span>, but I can flag your order for express dispatch which would reach you by <span class="ph">[specific date]</span>. Would that work for you?"</div>
+
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"No, I need it sooner. Just cancel."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Understood — I'll process the cancellation. Just to confirm — you'd like to cancel the order for <span class="ph">[Product]</span> worth ₹<span class="ph">[Amount]</span>. Is that right?"</div>
+
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Yes, cancel it."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Done! Your order has been cancelled. <span class="ph">[If prepaid: Your refund of ₹[Amount] will be processed within [X] business days back to your original payment method.]</span> <span class="ph">[If COD: No payment was made, so nothing to refund.]</span> Sorry it didn't work out this time — we hope to serve you again soon!"</div>
+      <div class="tag-row"><span class="tag tag-r">CANCELLED!</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#FCEBEB;"><i class="ti ti-shopping-cart-off" style="color:#A32D2D;" aria-hidden="true"></i></div>
+      <div class="ctitle">Cancellation reasons — fixes to offer</div>
+      <span class="ctag" style="background:#FCEBEB;color:#A32D2D;">Retention scripts</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb">
+      <div class="divlabel">reason: found it cheaper elsewhere</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"I understand! May I ask where you found it cheaper? Sometimes I can check if we have any offer or coupon that can match the price for you."</div>
+
+      <div class="divlabel">reason: ordered by mistake</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"No problem at all — these things happen! Just to confirm — you'd like to cancel the order for <span class="ph">[Product]</span>? I'll get that done for you right away."</div>
+      <div class="tag-row"><span class="tag tag-r">CANCELLED!</span></div>
+
+      <div class="divlabel">reason: wrong product ordered</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"No problem! What were you actually looking for? If we have it in our store I can update the order to the correct product right now — that would be faster than cancelling and reordering."</div>
+
+      <div class="divlabel">reason: already bought from elsewhere</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Ah, understood! I'll process the cancellation right away. <span class="ph">[Refund details if prepaid]</span>. We hope to see you again next time — have a great day!"</div>
+      <div class="tag-row"><span class="tag tag-r">CANCELLED!</span></div>
+
+      <div class="divlabel">reason: financial issue / can't afford now</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Completely understood — no worries at all. I'll cancel this now. If you'd like, I can save your details and reach out when we have a sale or offer on this product. Would that be helpful?"</div>
+      <div class="tag-row"><span class="tag tag-r">CANCELLED!</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#FAEEDA;"><i class="ti ti-alert-triangle" style="color:#854F0B;" aria-hidden="true"></i></div>
+      <div class="ctitle">Customer cancels during order review phase</div>
+      <span class="ctag" style="background:#FAEEDA;color:#854F0B;">Catches errors early</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb">
+      <div class="divlabel">customer hears details and wants to cancel</div>
+      <div class="speaker" style="color:#185FA5;">Aria (reading order)</div>
+      <div class="bubble bubble-agent">"You've ordered a Red T-shirt, size XL, ₹799, delivering to Mumbai..."</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Wait, I ordered a Blue T-shirt, not Red!"</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"I'm sorry about that — that does seem like an error. Let me check if the blue T-shirt in XL is available... <span class="ph">[pause]</span> Yes, blue XL is in stock! I can update your order to blue right now at the same price. Would you like me to do that?"</div>
+
+      <div class="divlabel">if customer wants to cancel after catching error</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"No, just cancel it. I'll reorder correctly."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Understood! I can actually update the order to the correct product right now without you needing to reorder — it's faster and you won't have to go through checkout again. Would you like me to just fix it?"</div>
+
+      <div class="tip"><i class="ti ti-star" aria-hidden="true"></i> Catching errors during order review is the biggest value of this phase. A customer who discovers a wrong item during the call can fix it immediately — reducing returns, disputes, and frustration.</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════ NO ANSWER ══════════════ -->
+<div class="pane" id="noans">
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#FAEEDA;"><i class="ti ti-clock" style="color:#854F0B;" aria-hidden="true"></i></div>
+      <div class="ctitle">Silence / no response timing protocol</div>
+      <span class="ctag" style="background:#FAEEDA;color:#854F0B;">Follow exactly</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb open">
+      <div class="bubble bubble-system">0–4 seconds → stay silent, normal connection lag</div>
+      <div class="speaker" style="color:#185FA5;">At 5 seconds</div>
+      <div class="bubble bubble-agent">"Hello? Am I speaking with <span class="ph">[Name]</span>?"</div>
+      <div class="speaker" style="color:#185FA5;">At 12 seconds</div>
+      <div class="bubble bubble-agent">"Hi there — I can hear some background noise. Take your time, I'm right here!"</div>
+      <div class="speaker" style="color:#185FA5;">At 20 seconds</div>
+      <div class="bubble bubble-agent">"I'm not able to hear you clearly — there might be a connection issue. You can call us back at <span class="ph">[number]</span> or we'll reach out on WhatsApp. Have a good day!"</div>
+      <div class="bubble bubble-system">30 seconds → disconnect. Log as No Answer. Send WhatsApp. Tag: Retry Call</div>
+      <div class="tag-row"><span class="tag tag-o">Retry Call</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#E6F1FB;"><i class="ti ti-phone-off" style="color:#185FA5;" aria-hidden="true"></i></div>
+      <div class="ctitle">Phone not answered — retry schedule scripts</div>
+      <span class="ctag" style="background:#E6F1FB;color:#185FA5;">5 attempts max</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb">
+      <div class="divlabel">attempt 1 — no answer</div>
+      <div class="bubble bubble-system">Disconnect after 30s ringing. No voicemail. Send WhatsApp: "Hi [Name]! We tried calling about your [Brand] order for [Product]. Reply CONFIRM or CANCEL to let us know. We'll try again shortly!"</div>
+
+      <div class="divlabel">attempt 2 — leave voicemail</div>
+      <div class="speaker" style="color:#185FA5;">Aria — voicemail message</div>
+      <div class="bubble bubble-agent">"Hi, this is a message for <span class="ph">[Name]</span> — Aria calling from <span class="ph">[Brand]</span> about your order for <span class="ph">[Product]</span>. Please call us back on <span class="ph">[number]</span> or reply to our WhatsApp to confirm. Thank you!"</div>
+
+      <div class="divlabel">attempt 4 — final voice attempt</div>
+      <div class="speaker" style="color:#185FA5;">Aria — if customer answers on attempt 4</div>
+      <div class="bubble bubble-agent">"Hi <span class="ph">[Name]</span>! This is Aria from <span class="ph">[Brand]</span> — I've been trying to reach you about your order for <span class="ph">[Product]</span>. This is our final call attempt. If I don't hear from you, your order will be held and we'll send a final message to confirm. Is this a good time to quickly go over it?"</div>
+
+      <div class="divlabel">after 5 attempts — final whatsapp</div>
+      <div class="bubble bubble-system">Send: "Hi [Name], this is our final message about your [Brand] order [#ID] for [Product] worth ₹[Amount]. Please reply CONFIRM to proceed or CANCEL to cancel. If we don't hear from you within 24 hours, the order will be automatically cancelled. Thank you!"</div>
+      <div class="tag-row"><span class="tag tag-o">Not Picking Phone</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#FCEBEB;"><i class="ti ti-phone-x" style="color:#A32D2D;" aria-hidden="true"></i></div>
+      <div class="ctitle">Customer hangs up mid-call</div>
+      <span class="ctag" style="background:#FCEBEB;color:#A32D2D;">Check transcript</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb">
+      <div class="divlabel">hung up before any intent captured</div>
+      <div class="bubble bubble-system">Send WhatsApp: "Hi [Name]! We got disconnected during our call about your [Brand] order. Reply CONFIRM to proceed or CANCEL to cancel. Happy to help!"</div>
+      <div class="tag-row"><span class="tag tag-o">Retry Call</span></div>
+
+      <div class="divlabel">hung up after saying something — check transcript</div>
+      <div class="bubble bubble-system">Scan transcript for confirm/cancel keywords. If clear confirm found → tag Proceed + note "Intent clear from transcript, call dropped." If unclear → Retry Call → send WhatsApp.</div>
+
+      <div class="divlabel">hung up after saying cancel</div>
+      <div class="bubble bubble-system">Do NOT auto-cancel. Send WhatsApp: "Hi [Name], we got disconnected. Did you mean to cancel your order for [Product]? Reply CANCEL to confirm cancellation, or KEEP to keep it."</div>
+      <div class="tip"><i class="ti ti-check" aria-hidden="true"></i> Cancellation always needs explicit re-confirmation even if transcript shows cancel keyword. Confirmation can be inferred — cancellation cannot. Asymmetric for safety.</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════ EDGE CASES ══════════════ -->
+<div class="pane" id="edge">
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#FCEBEB;"><i class="ti ti-flame" style="color:#A32D2D;" aria-hidden="true"></i></div>
+      <div class="ctitle">Customer is angry about receiving the call</div>
+      <span class="ctag" style="background:#FCEBEB;color:#A32D2D;">De-escalate fast</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb open">
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Why are you calling me? Stop calling!"</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"I'm really sorry for the interruption — I completely understand. I was just calling to confirm your order, but I won't call again. We'll send you a message instead to confirm at your convenience. So sorry for disturbing you!"</div>
+      <div class="bubble bubble-note"><i class="ti ti-tag" aria-hidden="true"></i> Log DNC. Switch to WhatsApp/SMS only for all future communication.</div>
+      <div class="tag-row"><span class="tag tag-r">DNC</span><span class="tag tag-o">Retry Call</span></div>
+
+      <div class="divlabel">angry but still wants the order</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"I don't want calls — just send the order!"</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Of course! I'll confirm your order right now and note that you prefer not to be called. Your order for <span class="ph">[Product]</span> is confirmed and will be dispatched shortly. You'll receive updates by SMS only. Thank you!"</div>
+      <div class="tag-row"><span class="tag tag-g">Proceed</span><span class="tag tag-g">AI Confirmed</span><span class="tag tag-r">DNC</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#E6F1FB;"><i class="ti ti-help" style="color:#185FA5;" aria-hidden="true"></i></div>
+      <div class="ctitle">Customer doesn't recognise the order</div>
+      <span class="ctag" style="background:#E6F1FB;color:#185FA5;">Common for COD</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb">
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"I didn't place any order."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"No problem — let me give you a few details and see if it rings a bell. An order was placed on <span class="ph">[date]</span> for <span class="ph">[Product Name]</span> worth ₹<span class="ph">[Amount]</span>, with delivery to <span class="ph">[City, State]</span>. Does that sound familiar at all?"</div>
+
+      <div class="divlabel">they recognise it</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Oh yes! My wife placed that order."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Ah, got it! So shall I confirm the order then — <span class="ph">[Product]</span>, ₹<span class="ph">[Amount]</span>, delivering to <span class="ph">[City]</span>?"</div>
+
+      <div class="divlabel">they still don't recognise it — potential fraud</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"No, I really didn't order this. I don't know what this is."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"I completely understand — I'm very sorry about this. I'm placing your order on hold right away and our team will look into this for you. Has anyone else had access to your phone number recently? I want to make sure your account is safe. You'll hear from us shortly."</div>
+      <div class="tag-row"><span class="tag tag-r">Hold - Fraud Review</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#EAF3DE;"><i class="ti ti-user-heart" style="color:#3B6D11;" aria-hidden="true"></i></div>
+      <div class="ctitle">Elderly or confused customer</div>
+      <span class="ctag" style="background:#EAF3DE;color:#3B6D11;">Extra patience</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb">
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"I can't hear you properly... what order? Who is this?"</div>
+      <div class="speaker" style="color:#185FA5;">Aria — slow down, speak clearly</div>
+      <div class="bubble bubble-agent">"Hello! My name is Aria. I am calling from <span class="ph">[Brand Name]</span>. You placed an order with us. I just want to confirm it. There is no rush — take your time."</div>
+
+      <div class="divlabel">customer asks someone else to take the call</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Wait, let me get my son."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Of course — please take your time, no rush at all!"</div>
+      <div class="speaker" style="color:#185FA5;">Aria — when son comes on</div>
+      <div class="bubble bubble-agent">"Hi! I'm Aria from <span class="ph">[Brand]</span>. I was calling to confirm an order placed by <span class="ph">[customer name]</span> for <span class="ph">[Product]</span>, ₹<span class="ph">[Amount]</span>, delivering to <span class="ph">[City]</span>. Are you happy to confirm on their behalf?"</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#EEEDFE;"><i class="ti ti-building-store" style="color:#534AB7;" aria-hidden="true"></i></div>
+      <div class="ctitle">Bulk / business order</div>
+      <span class="ctag" style="background:#EEEDFE;color:#534AB7;">Special handling</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb">
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Hi <span class="ph">[Name]</span>! This is Aria from <span class="ph">[Brand]</span>. I'm calling about a bulk order of <span class="ph">[Quantity]</span> units of <span class="ph">[Product]</span> totalling ₹<span class="ph">[Amount]</span>. I wanted to personally confirm this with you before we begin processing. Is all the quantity and delivery information correct?"</div>
+
+      <div class="divlabel">if they want to modify bulk quantity</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Make it 50 units instead of 30."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Got it — 50 units. The updated total would be ₹<span class="ph">[new amount]</span>. Let me read back the full order — 50 units of <span class="ph">[Product]</span>, ₹<span class="ph">[new amount]</span>, delivering to <span class="ph">[City]</span>. Is that all correct before I confirm?"</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#FAEEDA;"><i class="ti ti-truck" style="color:#854F0B;" aria-hidden="true"></i></div>
+      <div class="ctitle">Order already shipped before call</div>
+      <span class="ctag" style="background:#FAEEDA;color:#854F0B;">Check before calling</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb">
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Hi <span class="ph">[Name]</span>! This is Aria from <span class="ph">[Brand]</span>. I was calling about your order but I just saw that it's actually already been dispatched! Your <span class="ph">[Product]</span> is on its way and should reach you by <span class="ph">[date]</span>. You'll receive a tracking SMS shortly if you haven't already. Sorry for the unnecessary call — have a great day!"</div>
+      <div class="tag-row"><span class="tag tag-g">Proceed</span></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════ HINDI SCRIPTS ══════════════ -->
+<div class="pane" id="hindi">
+
+  <div class="ok"><i class="ti ti-info-circle" aria-hidden="true"></i> Switch to Hindi the moment the customer speaks Hindi. Never force English on a Hindi speaker. Match their language immediately.</div>
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#E6F1FB;"><i class="ti ti-language" style="color:#185FA5;" aria-hidden="true"></i></div>
+      <div class="ctitle">Complete Hindi call — opening to close</div>
+      <span class="ctag" style="background:#E6F1FB;color:#185FA5;">Full script</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb open">
+      <div class="speaker" style="color:#185FA5;">Aria — opening</div>
+      <div class="bubble bubble-agent">"Namaste! Kya main <span class="ph">[Name]</span> ji se baat kar sakti hoon?"</div>
+      <div class="bubble bubble-system">Translation: "Hello! May I speak with [Name]?"</div>
+
+      <div class="speaker" style="color:#185FA5;">Aria — after confirmed</div>
+      <div class="bubble bubble-agent">"Namaste <span class="ph">[Name]</span> ji! Main Aria bol rahi hoon <span class="ph">[Brand]</span> se. Main aapka ek order confirm karna chahti thi. Kya aap thoda time de sakte hain?"</div>
+      <div class="bubble bubble-system">Translation: "Hello [Name]! I'm Aria from [Brand]. I wanted to confirm your order. Can you spare a moment?"</div>
+
+      <div class="divlabel">order review in hindi</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Aapne <span class="ph">[Product]</span> order kiya hai — <span class="ph">[Quantity]</span> piece, <span class="ph">[Color/Size]</span>, total ₹<span class="ph">[Amount]</span> <span class="ph">[COD: jo delivery ke waqt dena hoga]</span>. Delivery <span class="ph">[City]</span> mein hogi. Kya sab sahi hai?"</div>
+      <div class="bubble bubble-system">Translation: "You've ordered [Product] — [Quantity] piece, [Color/Size], total ₹[Amount] [payable at delivery]. Delivery will be in [City]. Is everything correct?"</div>
+
+      <div class="divlabel">update offer in hindi</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Confirm karne se pehle — kya aap kuch change karna chahenge? Jaise quantity, colour, size, ya delivery address?"</div>
+      <div class="bubble bubble-system">Translation: "Before confirming — would you like to change anything? Like quantity, colour, size, or delivery address?"</div>
+
+      <div class="divlabel">final confirmation in hindi</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Toh main confirm karta hoon — <span class="ph">[Product]</span>, ₹<span class="ph">[Amount]</span>, <span class="ph">[City]</span> mein delivery. Kya aap proceed karna chahenge?"</div>
+      <div class="bubble bubble-system">Translation: "So let me confirm — [Product], ₹[Amount], delivery in [City]. Would you like to proceed?"</div>
+
+      <div class="divlabel">confirmed in hindi</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Haan, bilkul. Bhej do."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Bahut accha! Aapka order confirm ho gaya hai. Jab order dispatch hoga tab aapko SMS milega tracking ke saath. Bahut shukriya <span class="ph">[Name]</span> ji — aapka din achha rahe!"</div>
+      <div class="bubble bubble-system">Translation: "Wonderful! Your order is confirmed. You'll receive an SMS with tracking when it's dispatched. Thank you [Name] — have a great day!"</div>
+      <div class="tag-row"><span class="tag tag-g">Proceed</span><span class="tag tag-g">AI Confirmed</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#FAEEDA;"><i class="ti ti-language-hiragana" style="color:#854F0B;" aria-hidden="true"></i></div>
+      <div class="ctitle">Hindi keywords — confirm / cancel / unclear</div>
+      <span class="ctag" style="background:#FAEEDA;color:#854F0B;">Detection reference</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb">
+      <div class="divlabel">confirm signals</div>
+      <div class="bubble bubble-system">haan · haan ji · theek hai · bilkul · zaroor · aage badho · bhej do · kar do · confirm · proceed · sahi hai · okay ji · ha bhai</div>
+      <div class="divlabel">cancel signals</div>
+      <div class="bubble bubble-system">nahi · nahi chahiye · cancel karo · mat bhejo · band karo · rukjao · nahi karna · cancel · wapas karo</div>
+      <div class="divlabel">unclear / retry signals</div>
+      <div class="bubble bubble-system">sochta hoon · baad mein · kal baat karte · abhi nahi · thoda time chahiye · pata nahi</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch" onclick="tog(this)">
+      <div class="ci" style="background:#EAF3DE;"><i class="ti ti-message-dots" style="color:#3B6D11;" aria-hidden="true"></i></div>
+      <div class="ctitle">Hinglish — mixed language handling</div>
+      <span class="ctag" style="background:#EAF3DE;color:#3B6D11;">Most common in India</span>
+      <i class="ti ti-chevron-down cch"></i>
+    </div>
+    <div class="cb">
+      <div class="speaker" style="color:#1D9E75;">Customer (Hinglish)</div>
+      <div class="bubble bubble-customer">"Haan yaar, confirm kar do. Aur address change karna tha."</div>
+      <div class="speaker" style="color:#185FA5;">Aria — respond in Hinglish</div>
+      <div class="bubble bubble-agent">"Sure! Address change karte hain pehle. Naya address bata do — house number, street, city, pincode."</div>
+
+      <div class="divlabel">hinglish cancel</div>
+      <div class="speaker" style="color:#1D9E75;">Customer</div>
+      <div class="bubble bubble-customer">"Yaar cancel kar do. Need nahi hai abhi."</div>
+      <div class="speaker" style="color:#185FA5;">Aria</div>
+      <div class="bubble bubble-agent">"Okay! Cancel kar rahi hoon. Bas ek baar confirm karo — <span class="ph">[Product]</span> ka order cancel karna chahte ho? <span class="ph">[Refund details if prepaid]</span>."</div>
+      <div class="tip"><i class="ti ti-check" aria-hidden="true"></i> Hinglish is the most natural way most urban Indian customers speak. Match their mix — don't force pure Hindi or pure English. If they say "yaar confirm kar do", respond in the same register.</div>
+    </div>
+  </div>
+
+</div>
+
+</div>
+
+<script>
+function tog(h){const b=h.nextElementSibling,c=h.querySelector('.cch'),o=b.classList.contains('open');b.classList.toggle('open',!o);c.classList.toggle('open',!o);}
+function sw(id,el){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));document.getElementById(id).classList.add('on');el.classList.add('on');}
+</script>

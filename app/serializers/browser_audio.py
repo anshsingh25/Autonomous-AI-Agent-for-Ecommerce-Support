@@ -8,6 +8,7 @@ from typing import Optional
 from pipecat.frames.frames import (
     Frame,
     InputAudioRawFrame,
+    InputTextRawFrame,
     OutputAudioRawFrame,
     OutputTransportMessageFrame,
     OutputTransportMessageUrgentFrame,
@@ -45,6 +46,10 @@ class BrowserAudioSerializer(FrameSerializer):
                 return None
             if message.get("type") == "ping":
                 return None
+            if message.get("type") == "language":
+                lang = (message.get("lang") or "").lower()
+                text = "hindi" if lang in ("hi", "hindi", "hin") else "english"
+                return InputTextRawFrame(text=text)
             return None
 
         if isinstance(data, (bytes, bytearray)) and len(data) > 0:

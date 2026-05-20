@@ -23,6 +23,11 @@ class Settings(BaseSettings):
 
     # Public URL for Twilio WebSocket (e.g. wss://abc123.ngrok-free.app/voice/ws)
     public_ws_url: str = Field(default="", validation_alias="PUBLIC_WS_URL")
+    # HTTPS base for outbound answer webhooks (defaults from PUBLIC_WS_URL if unset)
+    public_http_url: str = Field(default="", validation_alias="PUBLIC_HTTP_URL")
+
+    # Telephony: mock | twilio | exotel (outbound + inbound media stream)
+    telephony_provider: str = Field(default="mock", validation_alias="TELEPHONY_PROVIDER")
 
     gemini_api_key: str = Field(default="", validation_alias="GEMINI_API_KEY")
     gemini_model: str = Field(
@@ -49,12 +54,48 @@ class Settings(BaseSettings):
     twilio_auth_token: str = Field(default="", validation_alias="TWILIO_AUTH_TOKEN")
     twilio_phone_number: str = Field(default="", validation_alias="TWILIO_PHONE_NUMBER")
 
+    exotel_account_sid: str = Field(default="", validation_alias="EXOTEL_ACCOUNT_SID")
+    exotel_api_key: str = Field(default="", validation_alias="EXOTEL_API_KEY")
+    exotel_api_token: str = Field(default="", validation_alias="EXOTEL_API_TOKEN")
+    exotel_caller_id: str = Field(
+        default="",
+        validation_alias="EXOTEL_CALLER_ID",
+        description="ExoPhone number for outbound CallerId",
+    )
+    exotel_api_host: str = Field(
+        default="https://api.in.exotel.com",
+        validation_alias="EXOTEL_API_HOST",
+    )
+    exotel_outbound_app_id: str = Field(
+        default="",
+        validation_alias="EXOTEL_OUTBOUND_APP_ID",
+        description="App Bazaar voice flow id (Voicebot applet → dynamic WSS URL)",
+    )
+    exotel_outbound_flow_url: str = Field(
+        default="",
+        validation_alias="EXOTEL_OUTBOUND_FLOW_URL",
+        description=(
+            "ExoML start URL, e.g. http://my.exotel.com/your_account/exoml/start_voice/APP_ID. "
+            "Built from EXOTEL_OUTBOUND_APP_ID if empty."
+        ),
+    )
+
     # Order data: mock | shopify | api
     data_source: str = Field(default="mock", validation_alias="DATA_SOURCE")
 
     shopify_shop_domain: str = Field(default="", validation_alias="SHOPIFY_SHOP_DOMAIN")
     shopify_access_token: str = Field(default="", validation_alias="SHOPIFY_ACCESS_TOKEN")
     shopify_api_version: str = Field(default="2024-10", validation_alias="SHOPIFY_API_VERSION")
+    shopify_webhook_secret: str = Field(
+        default="",
+        validation_alias="SHOPIFY_WEBHOOK_SECRET",
+        description="HMAC secret from Shopify webhook (optional in dev)",
+    )
+    auto_confirmation_enabled: bool = Field(
+        default=True,
+        validation_alias="AUTO_CONFIRMATION_ENABLED",
+        description="Auto-dial customers for unfulfilled Shopify orders via webhook",
+    )
     store_api_base_url: str = Field(default="", validation_alias="STORE_API_BASE_URL")
     store_api_key: str = Field(default="", validation_alias="STORE_API_KEY")
     store_api_header_name: str = Field(

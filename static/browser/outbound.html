@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>badlavo Outbound Confirmation Test</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a2332;
+      --accent: #8b5cf6;
+      --accent-hover: #7c3aed;
+      --text: #e7ecf3;
+      --muted: #94a3b8;
+      --success: #22c55e;
+      --danger: #ef4444;
+      --border: rgba(255,255,255,.1);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+    .card {
+      width: 100%;
+      max-width: 520px;
+      background: var(--card);
+      border-radius: 16px;
+      padding: 2rem;
+      box-shadow: 0 20px 50px rgba(0,0,0,.4);
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 .25rem; }
+    .sub { color: var(--muted); font-size: .9rem; margin-bottom: 1.25rem; }
+    .nav { font-size: .8rem; margin-bottom: 1rem; }
+    .nav a { color: var(--accent); text-decoration: none; }
+    .nav a:hover { text-decoration: underline; }
+    label {
+      display: block;
+      font-size: .75rem;
+      color: var(--muted);
+      margin-bottom: .35rem;
+      margin-top: .75rem;
+    }
+    input {
+      width: 100%;
+      padding: .65rem .85rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(0,0,0,.3);
+      color: var(--text);
+      font-size: 1rem;
+    }
+    .order-box {
+      margin: 1rem 0;
+      padding: .85rem 1rem;
+      background: rgba(0,0,0,.25);
+      border-radius: 8px;
+      font-size: .85rem;
+      line-height: 1.5;
+      display: none;
+    }
+    .order-box.visible { display: block; }
+    .order-box strong { color: var(--text); }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      padding: .75rem 1rem;
+      background: rgba(0,0,0,.25);
+      border-radius: 8px;
+      margin: 1rem 0;
+      font-size: .875rem;
+    }
+    .dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+    }
+    .dot.live { background: var(--success); animation: pulse 1.2s infinite; }
+    .dot.speaking { background: var(--accent); }
+    @keyframes pulse { 50% { opacity: .5; } }
+    button {
+      width: 100%;
+      padding: 1rem;
+      font-size: 1rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      margin-top: .5rem;
+    }
+    #startBtn {
+      background: var(--accent);
+      color: white;
+    }
+    #startBtn:hover:not(:disabled) { background: var(--accent-hover); }
+    #startBtn:disabled { opacity: .5; cursor: not-allowed; }
+    #startBtn.active { background: var(--danger); }
+    .outcome {
+      margin-top: 1rem;
+      padding: 1rem;
+      border-radius: 8px;
+      font-size: .85rem;
+      display: none;
+    }
+    .outcome.visible { display: block; }
+    .outcome.confirmed { background: rgba(34,197,94,.15); border: 1px solid var(--success); }
+    .outcome.cancelled { background: rgba(239,68,68,.15); border: 1px solid var(--danger); }
+    .outcome.retry { background: rgba(148,163,184,.15); border: 1px solid var(--muted); }
+    .hints {
+      margin-top: 1.25rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+      font-size: .8rem;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+    .lang-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      margin: 0.75rem 0;
+    }
+    .lang-label { font-size: 0.85rem; color: #555; }
+    .lang-btn {
+      padding: 0.45rem 1rem;
+      border-radius: 8px;
+      border: 1px solid #185FA5;
+      background: #E6F1FB;
+      color: #185FA5;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .lang-btn:hover { background: #cce4f7; }
+
+    .log {
+      margin-top: .75rem;
+      font-size: .75rem;
+      color: var(--muted);
+      max-height: 5rem;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <p class="nav"><a href="/browser">← Inbound support test</a></p>
+    <h1>Outbound order confirmation</h1>
+    <p class="sub">Voice-only test — same mic/WebSocket path as a real outbound phone call.</p>
+
+    <label for="orderId">Order number</label>
+    <input id="orderId" type="text" placeholder="e.g. 1569 or ORD-1001" value="ORD-1001" />
+
+    <label for="phone">Phone (optional — mock uses placeholder if empty)</label>
+    <input id="phone" type="tel" placeholder="+919876543210" />
+
+    <div id="orderBox" class="order-box"></div>
+
+    <div class="status">
+      <span class="dot" id="dot"></span>
+      <span id="statusText">Enter order and start test call</span>
+    </div>
+
+    <button type="button" id="startBtn" disabled>Start confirmation call</button>
+
+    <div id="langRow" class="lang-row" hidden>
+      <span class="lang-label">Quick answer:</span>
+      <button type="button" class="lang-btn" id="btnHindi">Hindi</button>
+      <button type="button" class="lang-btn" id="btnEnglish">English</button>
+    </div>
+
+    <div id="outcomeBox" class="outcome"></div>
+    <div class="log" id="log"></div>
+
+    <div class="hints">
+      <strong>How to test</strong><br />
+      1. Enter a real Shopify order ID or mock <code>ORD-1001</code><br />
+      2. Click Start — Aria will greet you like an outbound call<br />
+      3. When asked language — say <strong>hindi</strong> or <strong>english</strong> clearly, then pause briefly<br />
+      4. After order review, say <strong>yes</strong> / <strong>haan</strong> to confirm or <strong>cancel</strong> to reject<br />
+      5. End the call — Shopify tags update if <code>DATA_SOURCE=shopify</code><br /><br />
+      <strong>Real phone dial:</strong> use <code>POST /api/outbound/confirm-order</code> instead.
+    </div>
+  </div>
+
+  <script>
+    const CAPTURE_RATE = 16000;
+    const PLAYBACK_RATE = 24000;
+    const CAPTURE_BUFFER = 1024;
+
+    const orderIdInput = document.getElementById("orderId");
+    const phoneInput = document.getElementById("phone");
+    const orderBox = document.getElementById("orderBox");
+    const outcomeBox = document.getElementById("outcomeBox");
+    const dot = document.getElementById("dot");
+    const statusText = document.getElementById("statusText");
+    const startBtn = document.getElementById("startBtn");
+    const langRow = document.getElementById("langRow");
+    const btnHindi = document.getElementById("btnHindi");
+    const btnEnglish = document.getElementById("btnEnglish");
+    const logEl = document.getElementById("log");
+
+    let sessionId = null;
+    let ws = null;
+    let audioContext = null;
+    let nativeRate = CAPTURE_RATE;
+    let mediaStream = null;
+    let processor = null;
+    let source = null;
+    let nextPlayTime = 0;
+    let micActive = false;
+    let awaitingGreetingEnd = false;
+    let micEnableFallbackTimer = null;
+    let playbackEndTimer = null;
+    let aiSpeaking = false;
+    let keepaliveTimer = null;
+    let stopping = false;
+    let finalizedSessionId = null;
+    let audioChunks = 0;
+
+    function sendLanguage(lang) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({ type: "language", lang }));
+      log("Language tap: " + lang);
+      langRow.hidden = true;
+    }
+
+    btnHindi.addEventListener("click", () => sendLanguage("hi"));
+    btnEnglish.addEventListener("click", () => sendLanguage("en"));
+
+    function log(msg) {
+      console.log(msg);
+      logEl.textContent = typeof msg === "string" ? msg : JSON.stringify(msg, null, 2);
+    }
+
+    function setStatus(text, state = "idle") {
+      statusText.textContent = text;
+      dot.className = "dot" + (state === "live" ? " live" : state === "speaking" ? " speaking" : "");
+    }
+
+    function wsUrl() {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      return `${proto}//${location.host}/browser/outbound/ws?session_id=${encodeURIComponent(sessionId)}`;
+    }
+
+    function resample(input, fromRate, toRate) {
+      if (fromRate === toRate) return input;
+      const ratio = fromRate / toRate;
+      const outLen = Math.max(1, Math.round(input.length / ratio));
+      const out = new Float32Array(outLen);
+      for (let i = 0; i < outLen; i++) {
+        const pos = i * ratio;
+        const idx = Math.floor(pos);
+        const frac = pos - idx;
+        const a = input[idx] ?? 0;
+        const b = input[idx + 1] ?? a;
+        out[i] = a + frac * (b - a);
+      }
+      return out;
+    }
+
+    function floatTo16BitPCM(float32) {
+      const out = new Int16Array(float32.length);
+      for (let i = 0; i < float32.length; i++) {
+        const s = Math.max(-1, Math.min(1, float32[i]));
+        out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      return out.buffer;
+    }
+
+    function pcm16ToFloat32(arrayBuffer) {
+      const int16 = new Int16Array(arrayBuffer);
+      const float32 = new Float32Array(int16.length);
+      for (let i = 0; i < int16.length; i++) {
+        float32[i] = int16[i] / (int16[i] < 0 ? 0x8000 : 0x7fff);
+      }
+      return float32;
+    }
+
+    function schedulePlaybackEnd(durationSec) {
+      if (playbackEndTimer) clearTimeout(playbackEndTimer);
+      const endAt = (nextPlayTime - audioContext.currentTime) + durationSec + 0.08;
+      playbackEndTimer = setTimeout(() => {
+        if (audioContext && nextPlayTime <= audioContext.currentTime + 0.05) {
+          aiSpeaking = false;
+          if (awaitingGreetingEnd) {
+            awaitingGreetingEnd = false;
+            micActive = true;
+            if (micEnableFallbackTimer) clearTimeout(micEnableFallbackTimer);
+            log("Opening done — speak now or tap Hindi / English");
+            langRow.hidden = false;
+          }
+          setStatus("Your turn — speak or tap language", "live");
+        }
+      }, Math.max(50, endAt * 1000));
+    }
+
+    /** Gapless PCM16 — same scheduling as inbound /browser for natural playback speed. */
+    function enqueuePcm16(arrayBuffer) {
+      if (!audioContext || !arrayBuffer.byteLength) return;
+
+      const float32 = pcm16ToFloat32(arrayBuffer);
+      const buf = audioContext.createBuffer(1, float32.length, PLAYBACK_RATE);
+      buf.copyToChannel(float32, 0);
+
+      const now = audioContext.currentTime;
+      if (nextPlayTime < now) nextPlayTime = now + 0.02;
+
+      const node = audioContext.createBufferSource();
+      node.buffer = buf;
+      node.connect(audioContext.destination);
+      node.start(nextPlayTime);
+
+      const duration = buf.duration;
+      nextPlayTime += duration;
+      schedulePlaybackEnd(duration);
+
+      if (!aiSpeaking) {
+        aiSpeaking = true;
+        setStatus("Aria speaking…", "speaking");
+      }
+    }
+
+    function showOrderPreview(data) {
+      const items = (data.items || []).join(", ") || "—";
+      orderBox.innerHTML = `
+        <strong>Order ${data.order_id}</strong> · ${data.customer_name}<br />
+        ${items}<br />
+        Total: ₹${Math.round(data.total_inr || 0)} · ${data.status || ""}<br />
+        ${data.delivery_address ? "Ship to: " + data.delivery_address : ""}
+      `;
+      orderBox.classList.add("visible");
+    }
+
+    function showOutcome(result) {
+      const outcome = result.outcome || "unknown";
+      outcomeBox.className = "outcome visible " + (
+        outcome === "confirmed" ? "confirmed" :
+        outcome === "cancelled" ? "cancelled" : "retry"
+      );
+      let html = `<strong>Result: ${outcome}</strong>`;
+      if (result.transcript_excerpt) {
+        html += `<br />Heard: “${result.transcript_excerpt.slice(0, 120)}…”`;
+      }
+      if (result.shopify?.tags?.added?.length) {
+        html += `<br />Shopify tags added: ${result.shopify.tags.added.join(", ")}`;
+      }
+      if (result.shopify?.cancel?.message) {
+        html += `<br />${result.shopify.cancel.message}`;
+      }
+      outcomeBox.innerHTML = html;
+    }
+
+    async function finalizeSession() {
+      if (!sessionId) return;
+      if (finalizedSessionId === sessionId) return;
+      finalizedSessionId = sessionId;
+      try {
+        const res = await fetch(`/api/shopify/confirmation/finalize/${sessionId}`, {
+          method: "POST",
+        });
+        const data = await res.json();
+        showOutcome(data);
+        log(data);
+      } catch (err) {
+        log("Finalize failed: " + (err.message || err));
+      }
+    }
+
+    async function prepareSession() {
+      const order_id = orderIdInput.value.trim();
+      if (!order_id) throw new Error("Order number is required");
+      const body = { order_id };
+      const phone = phoneInput.value.trim();
+      if (phone) body.phone = phone;
+
+      const res = await fetch("/browser/outbound/prepare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || res.statusText);
+      }
+      const data = await res.json();
+      sessionId = data.session_id;
+      showOrderPreview(data);
+      return data;
+    }
+
+    async function startCall() {
+      stopping = false;
+      finalizedSessionId = null;
+      audioChunks = 0;
+      startBtn.disabled = true;
+      outcomeBox.className = "outcome";
+      setStatus("Loading order…");
+
+      await prepareSession();
+      setStatus("Requesting microphone…");
+
+      audioContext = new AudioContext({ latencyHint: "interactive" });
+      await audioContext.resume();
+      nativeRate = audioContext.sampleRate;
+
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+      });
+
+      ws = new WebSocket(wsUrl());
+      ws.binaryType = "arraybuffer";
+
+      ws.onopen = () => {
+        setStatus("Connected — wait for Aria's opening…", "live");
+        startBtn.textContent = "End confirmation call";
+        startBtn.classList.add("active");
+        startBtn.disabled = false;
+        micActive = false;
+        awaitingGreetingEnd = true;
+        log("Mic off until Aria finishes the opening (same as inbound test)");
+        micEnableFallbackTimer = setTimeout(() => {
+          if (!micActive) {
+            micActive = true;
+            awaitingGreetingEnd = false;
+            log("Mic on — speak now or tap Hindi / English");
+            langRow.hidden = false;
+            setStatus("Connected — speak or tap language", "live");
+          }
+        }, 9000);
+
+        source = audioContext.createMediaStreamSource(mediaStream);
+        processor = audioContext.createScriptProcessor(CAPTURE_BUFFER, 1, 1);
+        processor.onaudioprocess = (e) => {
+          if (!micActive || ws.readyState !== WebSocket.OPEN) return;
+          let samples = e.inputBuffer.getChannelData(0);
+          if (nativeRate !== CAPTURE_RATE) {
+            samples = resample(samples, nativeRate, CAPTURE_RATE);
+          }
+          ws.send(floatTo16BitPCM(samples));
+        };
+        const mute = audioContext.createGain();
+        mute.gain.value = 0;
+        source.connect(processor);
+        processor.connect(mute);
+        mute.connect(audioContext.destination);
+
+        keepaliveTimer = setInterval(() => {
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "ping" }));
+          }
+        }, 25000);
+      };
+
+      ws.onmessage = async (ev) => {
+        if (typeof ev.data === "string") {
+          log("Server: " + ev.data);
+          return;
+        }
+        await audioContext.resume();
+        audioChunks++;
+        if (audioChunks === 1) log("Streaming Aria (24 kHz)…");
+        enqueuePcm16(ev.data);
+      };
+
+      ws.onerror = () => {
+        setStatus("WebSocket error");
+        log("Check server is running on this host");
+      };
+
+      ws.onclose = () => {
+        if (!stopping) stop(false);
+      };
+    }
+
+    function stop(userInitiated) {
+      if (stopping) return;
+      stopping = true;
+      if (keepaliveTimer) clearInterval(keepaliveTimer);
+      if (micEnableFallbackTimer) clearTimeout(micEnableFallbackTimer);
+      if (playbackEndTimer) clearTimeout(playbackEndTimer);
+      if (processor) processor.disconnect();
+      if (source) source.disconnect();
+      if (mediaStream) mediaStream.getTracks().forEach((t) => t.stop());
+      if (ws) ws.close();
+      if (audioContext) audioContext.close();
+      processor = source = mediaStream = ws = audioContext = null;
+      micActive = false;
+      langRow.hidden = true;
+      startBtn.textContent = "Start confirmation call";
+      startBtn.classList.remove("active");
+      startBtn.disabled = false;
+      setStatus(userInitiated ? "Call ended" : "Disconnected");
+
+      if (sessionId) {
+        setStatus("Applying result to Shopify…");
+        // Server finalizes on WebSocket disconnect; fetch outcome once (avoids double tag API calls).
+        setTimeout(() => finalizeSession(), 800);
+      }
+      stopping = false;
+    }
+
+    orderIdInput.addEventListener("input", () => {
+      startBtn.disabled = !orderIdInput.value.trim();
+    });
+    startBtn.disabled = !orderIdInput.value.trim();
+
+    startBtn.addEventListener("click", () => {
+      if (ws) stop(true);
+      else startCall().catch((err) => {
+        log(err.message || String(err));
+        setStatus("Error — check order ID");
+        startBtn.disabled = false;
+      });
+    });
+  </script>
+</body>
+</html>

@@ -1,14 +1,16 @@
-"""Twilio voice webhook and WebSocket media stream routes."""
+"""Telephony webhooks (inbound + outbound) and media stream WebSocket."""
 
 from __future__ import annotations
 
 import logging
 from urllib.parse import parse_qs
 
-from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
-from app.ai.pipeline import run_twilio_voice_session
+from app.ai.pipeline import run_telephony_voice_session
+from app.services.order_confirmation_service import order_confirmation_service
+from app.services.telephony_twiml import exotel_voicebot_hint, twilio_stream_twiml
 from app.services.twilio_service import TwilioService
 from app.utils.config import Settings, get_settings
 
@@ -23,6 +25,33 @@ def get_twilio_service(settings: Settings = Depends(get_settings)) -> TwilioServ
 @router.get("/health")
 async def voice_health() -> dict:
     return {"status": "ok", "service": "voice"}
+
+
+@router.get("/exotel-setup")
+async def exotel_setup_checklist(settings: Settings = Depends(get_settings)) -> dict:
+    """Checklist URLs for Exotel outbound (fixes answer-then-disconnect)."""
+    from app.services.outbound_call_service import _public_http_base
+
+    try:
+        base = _public_http_base(settings)
+    except ValueError:
+        base = settings.public_http_url.rstrip("/") if settings.public_http_url else ""
+
+    app_id = getattr(settings, "exotel_outbound_app_id", "") or ""
+    account = settings.exotel_account_sid.strip()
+    flow_url = ""
+    if getattr(settings, "exotel_outbound_flow_url", ""):
+        flow_url = settings.exotel_outbound_flow_url.strip()
+    elif app_id and account:
+        flow_url = f"http://my.exotel.com/{account}/exoml/start_voice/{app_id}"
+
+    return {
+        "voicebot_dynamic_url": f"{base}/voice/outbound/exotel-answer" if base else "",
+        "websocket_path": "/voice/ws?session_id=<from CustomField>",
+        "exoml_connect_url": flow_url or "SET EXOTEL_OUTBOUND_APP_ID in .env",
+        "docs": "/docs/EXOTEL_OUTBOUND_SETUP.md",
+        "configured": bool(flow_url and settings.public_ws_url),
+    }
 
 
 @router.post("/incoming")
@@ -58,15 +87,103 @@ async def incoming_call(
     return HTMLResponse(content=twiml, media_type="application/xml")
 
 
+@router.post("/outbound/answer")
+async def outbound_call_answer(
+    session_id: str = Query(..., description="Outbound call session from API"),
+    settings: Settings = Depends(get_settings),
+) -> HTMLResponse:
+    """Twilio fetches this when the customer answers an outbound confirmation call."""
+    logger.info("Outbound answer TwiML session_id=%s", session_id)
+    twiml = twilio_stream_twiml(session_id, settings=settings)
+    return HTMLResponse(content=twiml, media_type="application/xml")
+
+
+@router.get("/outbound/exotel-answer")
+@router.post("/outbound/exotel-answer")
+async def outbound_exotel_answer(
+    request: Request,
+    session_id: str = Query(default=""),
+    settings: Settings = Depends(get_settings),
+):
+    """
+    Exotel Voicebot dynamic HTTPS URL — returns ``wss://.../voice/ws?session_id=``.
+
+    Set this URL on the Voicebot applet in App Bazaar (not on Calls/connect ``Url``).
+    """
+    qp = dict(request.query_params)
+    sid = (
+        session_id.strip()
+        or (qp.get("CustomField") or "").strip()
+        or (qp.get("custom_field") or "").strip()
+    )
+    logger.info(
+        "Exotel voicebot URL fetch method=%s session_id=%s query_keys=%s",
+        request.method,
+        sid or "(missing)",
+        sorted(qp.keys()),
+    )
+    if not sid:
+        return PlainTextResponse(
+            "session_id required (query param or Exotel CustomField)",
+            status_code=400,
+        )
+    hint = exotel_voicebot_hint(sid, settings=settings)
+    ws_url = hint["websocket_url"]
+    # Exotel Voicebot dynamic HTTPS must return JSON {"url": "wss://..."} (not plain text).
+    logger.info("Exotel voicebot WSS for session_id=%s → %s", sid, ws_url)
+    return JSONResponse({"url": ws_url})
+
+
+@router.post("/outbound/status")
+async def outbound_call_status(
+    request: Request,
+    session_id: str = Query(default=""),
+) -> dict:
+    """
+    Twilio call status callback — marks no-answer / busy as Retry Call.
+
+    Set StatusCallback on outbound dial to this URL with session_id query param.
+    """
+    body = await request.body()
+    form = {k: v[0] for k, v in parse_qs(body.decode("utf-8")).items()}
+    if not session_id:
+        session_id = form.get("session_id", "")
+    call_status = (form.get("CallStatus") or "").lower()
+    logger.info("Outbound status session=%s CallStatus=%s", session_id, call_status)
+
+    if session_id and call_status in (
+        "no-answer",
+        "busy",
+        "failed",
+        "canceled",
+        "cancelled",
+    ):
+        await order_confirmation_service.finalize_call(
+            session_id,
+            force_no_answer=True,
+        )
+    return {"status": "ok"}
+
+
 @router.websocket("/ws")
-async def media_stream(websocket: WebSocket) -> None:
-    """Twilio Media Streams WebSocket — realtime audio with Pipecat."""
+async def media_stream(
+    websocket: WebSocket,
+    session_id: str | None = Query(default=None),
+) -> None:
+    """Telephony media stream WebSocket — inbound support or outbound confirmation."""
     settings = get_settings()
     await websocket.accept()
-    logger.info("WebSocket accepted for media stream")
+    if not session_id:
+        session_id = websocket.query_params.get("session_id")
+    logger.info(
+        "WebSocket accepted (session_id=%s)",
+        session_id or "(resolve from Exotel start message)",
+    )
 
     try:
-        await run_twilio_voice_session(websocket, settings)
+        await run_telephony_voice_session(
+            websocket, settings, session_id=session_id
+        )
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected")
     except Exception:

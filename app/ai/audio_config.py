@@ -38,3 +38,21 @@ def twilio_vad_analyzer() -> SileroVADAnalyzer:
             min_volume=0.4,
         ),
     )
+
+
+def outbound_telephony_vad_analyzer() -> SileroVADAnalyzer:
+    """
+    Outbound 8 kHz — balanced VAD for faster customer-turn pickup on PSTN calls.
+
+    We still protect bot playback via OutboundAgentTurnMuteStrategy +
+    OutboundInterruptionFilter, so VAD can be less strict than before.
+    """
+    return SileroVADAnalyzer(
+        sample_rate=TWILIO_SAMPLE_RATE,
+        params=VADParams(
+            confidence=0.7,
+            start_secs=0.15,
+            stop_secs=0.35,
+            min_volume=0.35,
+        ),
+    )
