@@ -46,6 +46,28 @@ _SHORT_ONLY = re.compile(
     re.IGNORECASE,
 )
 
+_HINDI_TOKEN = re.compile(r"\b(hindi|हिंदी|हिन्दी)\b", re.IGNORECASE)
+_ENGLISH_TOKEN = re.compile(r"\b(english|angrezi|inglish)\b", re.IGNORECASE)
+
+
+def _choose_last_language_mention(text: str) -> str | None:
+    """
+    Choose the language from the final explicit language token in the text.
+
+    This handles mixed transcripts such as:
+    "english or hindi ... english" where customer's final answer is English.
+    """
+    mentions: list[tuple[int, str]] = []
+    for m in _HINDI_TOKEN.finditer(text):
+        mentions.append((m.start(), "hi"))
+    for m in _ENGLISH_TOKEN.finditer(text):
+        mentions.append((m.start(), "en"))
+    if not mentions:
+        return None
+    mentions.sort(key=lambda x: x[0])
+    return mentions[-1][1]
+
+
 def _clean_asr_text(text: str) -> str:
     """Strip ASR bracket noise e.g. '[Hindi.]' -> 'Hindi'."""
     cleaned = (text or "").strip()
@@ -73,7 +95,11 @@ def detect_language_choice(text: str) -> str | None:
     if en and not hi:
         return "en"
     if hi and en:
-        return "hi" if cleaned.lower().find("hindi") <= cleaned.lower().find("english") else "en"
+        last_choice = _choose_last_language_mention(cleaned)
+        if last_choice:
+            return last_choice
+        # Fallback for safety if tokenization failed.
+        return "en" if "english" in cleaned.lower() else "hi"
     return None
 
 
@@ -136,7 +162,9 @@ class OutboundShortReplyProcessor(FrameProcessor):
                 instruction = (
                     "[System — not the customer] The customer chose HINDI "
                     f'(they said: "{heard}"). Respond IMMEDIATELY in Hindi. '
-                    f'Say ONLY this purpose line now, then listen: "{purpose}"'
+                    f'Say ONLY this purpose line now, then listen: "{purpose}". '
+                    "For the rest of this call, continue in Hindi unless the customer "
+                    "explicitly asks to switch language."
                 )
             else:
                 purpose = ORDER_CONFIRMATION_OPENING_PURPOSE_EN.format(
@@ -146,7 +174,9 @@ class OutboundShortReplyProcessor(FrameProcessor):
                 instruction = (
                     "[System — not the customer] The customer chose ENGLISH "
                     f'(they said: "{heard}"). Respond IMMEDIATELY in English. '
-                    f'Say ONLY this purpose line now, then listen: "{purpose}"'
+                    f'Say ONLY this purpose line now, then listen: "{purpose}". '
+                    "For the rest of this call, continue in English unless the customer "
+                    "explicitly asks to switch language."
                 )
 
             logger.info(

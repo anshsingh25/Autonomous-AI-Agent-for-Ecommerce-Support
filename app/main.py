@@ -11,7 +11,7 @@ ensure_nltk_data()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import browser, orders, outbound, shopify_webhooks, voice
+from app.routes import browser, inbound, orders, outbound, shopify_webhooks, voice
 from app.utils.config import get_settings
 from app.utils.logging import setup_logging
 
@@ -42,6 +42,20 @@ async def lifespan(app: FastAPI):
         logger.warning(
             "PUBLIC_WS_URL is not set — Twilio cannot connect until you set your ngrok/WebSocket URL"
         )
+    else:
+        try:
+            from app.services.ngrok_check import detect_ngrok_mismatch
+
+            mismatch = detect_ngrok_mismatch(settings)
+            if mismatch:
+                logger.error(
+                    "NGROK MISMATCH — Exotel will disconnect on answer. configured=%s live=%s. %s",
+                    mismatch.get("configured_host"),
+                    mismatch.get("live_ngrok_https"),
+                    mismatch.get("fix"),
+                )
+        except Exception:
+            pass
     yield
     logger.info("Shutting down")
 
@@ -66,6 +80,7 @@ def create_app() -> FastAPI:
     app.include_router(browser.router)
     app.include_router(voice.router)
     app.include_router(outbound.router)
+    app.include_router(inbound.router)
     app.include_router(shopify_webhooks.router)
     app.include_router(orders.router)
 
@@ -78,6 +93,8 @@ def create_app() -> FastAPI:
             "browser_outbound_test": "/browser/outbound",
             "confirmation_calls_desk": "/browser/confirmation-desk",
             "voice_webhook_inbound": "/voice/incoming",
+            "exotel_inbound_voicebot": "/voice/inbound/exotel-answer",
+            "inbound_test_call": "POST /api/inbound/test-call",
             "voice_websocket": "/voice/ws",
             "outbound_confirm_call": "POST /api/outbound/confirm-order",
             "shopify_webhook_orders_paid": "POST /api/shopify/webhooks/orders-paid",

@@ -28,14 +28,14 @@ def browser_vad_analyzer() -> SileroVADAnalyzer:
 
 
 def twilio_vad_analyzer() -> SileroVADAnalyzer:
-    """8 kHz telephony — slightly shorter stop for phone latency."""
+    """8 kHz telephony — tuned for low dead-air on PSTN (inbound + Exotel)."""
     return SileroVADAnalyzer(
         sample_rate=TWILIO_SAMPLE_RATE,
         params=VADParams(
             confidence=0.7,
-            start_secs=0.15,
-            stop_secs=0.35,
-            min_volume=0.4,
+            start_secs=0.12,
+            stop_secs=0.28,
+            min_volume=0.3,
         ),
     )
 
@@ -51,8 +51,8 @@ def outbound_telephony_vad_analyzer() -> SileroVADAnalyzer:
         sample_rate=TWILIO_SAMPLE_RATE,
         params=VADParams(
             confidence=0.7,
-            start_secs=0.15,
-            stop_secs=0.35,
-            min_volume=0.35,
+            start_secs=0.12,
+            stop_secs=0.28,
+            min_volume=0.3,
         ),
     )

@@ -32,12 +32,20 @@ def _default_eta_date_str() -> str:
 
 
 def _delivery_address_fields(order) -> dict[str, Any]:
-    """Include delivery address in tool JSON when present on the order."""
+    """Shipping address (+ mobile on that address) for voice tools."""
     if order.delivery_address:
-        return {"delivery_address": order.delivery_address}
+        fields: dict[str, Any] = {
+            "delivery_address": order.delivery_address,
+            "address_source": "shipping_address",
+        }
+        if order.phone:
+            fields["shipping_phone"] = order.phone
+        return fields
     return {
         "delivery_address": None,
-        "message_no_address": "No delivery address is on file for this order.",
+        "shipping_phone": order.phone or None,
+        "address_source": "shipping_address",
+        "message_no_address": "No shipping address is on file for this order.",
     }
 
 

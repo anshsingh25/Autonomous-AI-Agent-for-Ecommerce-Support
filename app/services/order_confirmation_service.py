@@ -11,6 +11,7 @@ from app.database.shopify_store import ShopifyRepository
 from app.models.call_outcome import CallOutcome
 from app.models.call_context import OutboundCallContext
 from app.services.call_context_store import get_context, save_context
+from app.services.shipping_snapshot_cache import cache_from_shopify_raw
 from app.services.confirmation_intent import detect_confirmation_intent
 from app.services.outbound_call_service import OutboundCallService, outbound_call_service
 from app.services.shopify_tags import (
@@ -72,6 +73,8 @@ class OrderConfirmationService:
         if not eligible:
             logger.info("Skip confirmation call order=%s: %s", order_id_display, reason)
             return {"status": "skipped", "order_id": order_id_display, "reason": reason}
+
+        cache_from_shopify_raw(order_id_display or str(shopify_id), raw)
 
         phone = shopify.extract_phone(raw)
         if not phone:
@@ -160,11 +163,15 @@ class OrderConfirmationService:
         order_id = ctx.order_id
 
         if outcome == CallOutcome.CONFIRMED:
-            tag_res = await shopify.append_tags(order_id, list(TAGS_CONFIRMED))
+            tag_res = await shopify.reconcile_tags(
+                order_id,
+                add_tags=list(TAGS_CONFIRMED),
+                remove_tags=[*TAGS_NO_ANSWER, *TAGS_CANCELLED, TAG_CALL_IN_PROGRESS],
+            )
             return {
                 "action": "confirmed",
                 "tags": tag_res,
-                "message": "Order marked confirmed with Proceed + AI Confirmed tags",
+                "message": "Order marked confirmed; cleared Retry/Cancelled/In-Progress tags",
             }
 
         if outcome == CallOutcome.CANCELLED:
@@ -172,14 +179,22 @@ class OrderConfirmationService:
                 order_id,
                 reason="Customer cancelled during AI confirmation call",
             )
-            tag_res = await shopify.append_tags(order_id, list(TAGS_CANCELLED))
+            tag_res = await shopify.reconcile_tags(
+                order_id,
+                add_tags=list(TAGS_CANCELLED),
+                remove_tags=[*TAGS_CONFIRMED, *TAGS_NO_ANSWER, TAG_CALL_IN_PROGRESS],
+            )
             return {
                 "action": "cancelled",
                 "cancel": cancel_res,
                 "tags": tag_res,
             }
 
-        tag_res = await shopify.append_tags(order_id, list(TAGS_NO_ANSWER))
+        tag_res = await shopify.reconcile_tags(
+            order_id,
+            add_tags=list(TAGS_NO_ANSWER),
+            remove_tags=[TAG_CALL_IN_PROGRESS],
+        )
         return {
             "action": "no_answer",
             "tags": tag_res,

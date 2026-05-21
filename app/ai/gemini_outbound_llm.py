@@ -20,7 +20,7 @@ from app.ai.outbound_short_reply_processor import detect_language_choice
 
 logger = logging.getLogger(__name__)
 
-_INBOUND_TRANSCRIPTION_TIMEOUT_SEC = 0.3
+_INBOUND_TRANSCRIPTION_TIMEOUT_SEC = 0.14
 _SHORT_REPLY_TRANSCRIPTION_TIMEOUT_SEC = 0.12
 _LANGUAGE_PHRASE_MAX_LEN = 64
 
@@ -132,7 +132,7 @@ class OutboundGeminiLiveLLMService(GeminiLiveLLMService):
         now = time.monotonic()
         last_ts = getattr(self, "_outbound_last_push_mono", 0.0)
         last_text = getattr(self, "_outbound_last_push_text", "")
-        if now - last_ts < 0.2:
+        if now - last_ts < 0.15:
             if (
                 _buffer_is_complete_short_reply(cleaned)
                 or detect_language_choice(cleaned)

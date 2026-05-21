@@ -10,7 +10,11 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from app.ai.pipeline import run_telephony_voice_session
 from app.services.order_confirmation_service import order_confirmation_service
-from app.services.telephony_twiml import exotel_voicebot_hint, twilio_stream_twiml
+from app.services.telephony_twiml import (
+    exotel_inbound_voicebot_ws_url,
+    exotel_voicebot_hint,
+    twilio_stream_twiml,
+)
 from app.services.twilio_service import TwilioService
 from app.utils.config import Settings, get_settings
 
@@ -45,12 +49,20 @@ async def exotel_setup_checklist(settings: Settings = Depends(get_settings)) -> 
     elif app_id and account:
         flow_url = f"http://my.exotel.com/{account}/exoml/start_voice/{app_id}"
 
+    from app.services.ngrok_check import detect_ngrok_mismatch
+
+    ngrok_warning = detect_ngrok_mismatch(settings)
     return {
         "voicebot_dynamic_url": f"{base}/voice/outbound/exotel-answer" if base else "",
+        "inbound_voicebot_dynamic_url": f"{base}/voice/inbound/exotel-answer" if base else "",
+        "inbound_websocket": exotel_inbound_voicebot_ws_url(settings=settings)
+        if settings.public_ws_url
+        else "",
         "websocket_path": "/voice/ws?session_id=<from CustomField>",
         "exoml_connect_url": flow_url or "SET EXOTEL_OUTBOUND_APP_ID in .env",
         "docs": "/docs/EXOTEL_OUTBOUND_SETUP.md",
         "configured": bool(flow_url and settings.public_ws_url),
+        "ngrok_mismatch": ngrok_warning,
     }
 
 
@@ -98,6 +110,24 @@ async def outbound_call_answer(
     return HTMLResponse(content=twiml, media_type="application/xml")
 
 
+@router.get("/inbound/exotel-answer")
+@router.post("/inbound/exotel-answer")
+async def inbound_exotel_answer(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+):
+    """
+    Exotel Voicebot dynamic HTTPS URL for **inbound support** (no session_id).
+
+    Configure on your ExoPhone incoming flow Voicebot applet, or use as Calls/connect
+    ``Url`` for API test dials (see POST /api/inbound/test-call).
+    """
+    logger.info("Exotel inbound voicebot URL fetch method=%s", request.method)
+    ws_url = exotel_inbound_voicebot_ws_url(settings=settings)
+    logger.info("Exotel inbound voicebot WSS → %s", ws_url)
+    return JSONResponse({"url": ws_url})
+
+
 @router.get("/outbound/exotel-answer")
 @router.post("/outbound/exotel-answer")
 async def outbound_exotel_answer(
@@ -123,10 +153,12 @@ async def outbound_exotel_answer(
         sorted(qp.keys()),
     )
     if not sid:
-        return PlainTextResponse(
-            "session_id required (query param or Exotel CustomField)",
-            status_code=400,
+        ws_url = exotel_inbound_voicebot_ws_url(settings=settings)
+        logger.info(
+            "Exotel voicebot (inbound — no session_id / CustomField) → %s",
+            ws_url,
         )
+        return JSONResponse({"url": ws_url})
     hint = exotel_voicebot_hint(sid, settings=settings)
     ws_url = hint["websocket_url"]
     # Exotel Voicebot dynamic HTTPS must return JSON {"url": "wss://..."} (not plain text).

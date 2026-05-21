@@ -12,7 +12,15 @@ import httpx
 from app.database.mock_db import Order
 from app.models.order_line_item import OrderLineItemSnapshot
 from app.services.shopify_tags import order_should_skip_auto_call
-from app.utils.address import format_delivery_address
+from app.services.shipping_snapshot_cache import (
+    cache_delivery,
+    cache_from_shopify_raw,
+    get_cached,
+)
+from app.utils.address import (
+    format_delivery_address,
+    shipping_address_is_complete,
+)
 from app.utils.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -103,6 +111,9 @@ def order_from_shopify(order: dict[str, Any], *, refunds: list[dict[str, Any]] |
     last = customer.get("last_name") or ""
     name = f"{first} {last}".strip() or str(shipping.get("name") or "").strip() or "Customer"
     delivery_address = format_delivery_address(shipping) or format_delivery_address(billing)
+    display_key = str(order.get("name") or order.get("id", "")).lstrip("#").upper()
+    if shipping_address_is_complete(shipping):
+        cache_from_shopify_raw(display_key, order)
 
     items = [
         li.get("title") or li.get("name") or "Item"
@@ -137,7 +148,7 @@ def order_from_shopify(order: dict[str, Any], *, refunds: list[dict[str, Any]] |
     return Order(
         order_id=str(order.get("name") or order.get("id", "")).lstrip("#").upper(),
         customer_name=name,
-        phone=str(customer.get("phone") or order.get("phone") or ""),
+        phone=ShopifyRepository.extract_phone(order),
         status=status,
         total_inr=total if currency == "INR" else total,
         items=items,
@@ -320,12 +331,12 @@ class ShopifyRepository:
 
     @staticmethod
     def extract_phone(raw: dict[str, Any]) -> str:
-        """Best-effort phone from order, customer, or shipping/billing address."""
+        """Best-effort phone — prefer shipping address (matches Shopify Admin shipping block)."""
         for source in (
-            raw.get("phone"),
-            (raw.get("customer") or {}).get("phone"),
             (raw.get("shipping_address") or {}).get("phone"),
             (raw.get("billing_address") or {}).get("phone"),
+            raw.get("phone"),
+            (raw.get("customer") or {}).get("phone"),
             (raw.get("customer") or {}).get("default_address", {}).get("phone"),
         ):
             if source and str(source).strip():
@@ -437,6 +448,39 @@ class ShopifyRepository:
             return True, "tagsAdd ok"
         return False, "tagsAdd returned no node"
 
+    async def _remove_tags_graphql(
+        self, shopify_id: int, tags: list[str]
+    ) -> tuple[bool, str]:
+        """Remove tags via tagsRemove mutation."""
+        if not tags:
+            return True, "no tags to remove"
+        data = await self._graphql(
+            """
+            mutation tagsRemove($id: ID!, $tags: [String!]!) {
+              tagsRemove(id: $id, tags: $tags) {
+                node { id }
+                userErrors { field message }
+              }
+            }
+            """,
+            {
+                "id": f"gid://shopify/Order/{shopify_id}",
+                "tags": tags,
+            },
+        )
+        if not data:
+            return False, "GraphQL request failed"
+        result = (data.get("tagsRemove") or {})
+        errors = result.get("userErrors") or []
+        if errors:
+            messages = "; ".join(
+                str(e.get("message", e)) for e in errors if isinstance(e, dict)
+            )
+            return False, messages or "tagsRemove userErrors"
+        if result.get("node"):
+            return True, "tagsRemove ok"
+        return False, "tagsRemove returned no node"
+
     async def _append_tags_rest(
         self, shopify_id: int, merged_tags: list[str]
     ) -> tuple[bool, str]:
@@ -447,55 +491,82 @@ class ShopifyRepository:
             return False, "REST tag update failed"
         return True, "REST ok"
 
-    async def append_tags(self, order_id: str, tags_to_add: list[str]) -> dict[str, Any]:
-        """Append tags without removing existing ones."""
+    async def reconcile_tags(
+        self,
+        order_id: str,
+        *,
+        add_tags: list[str],
+        remove_tags: list[str],
+    ) -> dict[str, Any]:
+        """
+        Reconcile tags by adding/removing in one operation.
+
+        Keeps existing unrelated tags, removes contradictions (e.g. Retry Call after confirm),
+        and falls back to REST full-tag write if GraphQL add/remove fails.
+        """
         raw = await self._find_raw_order(order_id)
         if not raw:
             return {"success": False, "message": "Order not found"}
 
         existing = self.parse_tags(raw.get("tags"))
-        merged: list[str] = list(existing)
+        remove_lower = {t.strip().lower() for t in remove_tags if t and t.strip()}
+        cleaned_add = [t.strip() for t in add_tags if t and t.strip()]
+
+        merged = [t for t in existing if t.strip().lower() not in remove_lower]
+        merged_lower = {t.strip().lower() for t in merged}
         added: list[str] = []
-        for tag in tags_to_add:
-            tag = tag.strip()
-            if tag and tag not in merged:
+        removed = [t for t in existing if t.strip().lower() in remove_lower]
+
+        for tag in cleaned_add:
+            low = tag.lower()
+            if low not in merged_lower:
                 merged.append(tag)
+                merged_lower.add(low)
                 added.append(tag)
 
         display_id = str(raw.get("name", order_id)).lstrip("#").upper()
-        if not added:
+        if not added and not removed:
             return {
                 "success": True,
                 "order_id": display_id,
                 "tags": merged,
                 "added": [],
-                "message": "Tags already present",
+                "removed": [],
+                "message": "Tags already in desired state",
             }
 
         shopify_id = int(raw["id"])
-        ok, detail = await self._append_tags_graphql(shopify_id, added)
         method = "graphql"
+
+        ok_add, detail_add = await self._append_tags_graphql(shopify_id, added)
+        ok_remove, detail_remove = await self._remove_tags_graphql(shopify_id, removed)
+        ok = ok_add and ok_remove
+        detail = f"add={detail_add}; remove={detail_remove}"
+
         if not ok:
             logger.warning(
-                "Shopify tagsAdd failed order=%s (%s); trying REST fallback",
+                "Shopify tag reconcile failed order=%s (%s); trying REST fallback",
                 display_id,
                 detail,
             )
             ok, detail = await self._append_tags_rest(shopify_id, merged)
             method = "rest"
+
         if not ok:
             return {
                 "success": False,
                 "order_id": display_id,
                 "message": f"Shopify tag update failed: {detail}",
                 "added": [],
+                "removed": [],
             }
 
         self._invalidate_order_cache(order_id)
         logger.info(
-            "Shopify tags appended order=%s added=%s via=%s",
+            "Shopify tags reconciled order=%s added=%s removed=%s via=%s",
             display_id,
             added,
+            removed,
             method,
         )
         return {
@@ -503,8 +574,17 @@ class ShopifyRepository:
             "order_id": display_id,
             "tags": merged,
             "added": added,
+            "removed": removed,
             "method": method,
         }
+
+    async def append_tags(self, order_id: str, tags_to_add: list[str]) -> dict[str, Any]:
+        """Append tags without removing existing ones."""
+        return await self.reconcile_tags(
+            order_id,
+            add_tags=tags_to_add,
+            remove_tags=[],
+        )
 
     async def list_recent_unfulfilled_orders(self, *, limit: int = 50) -> list[dict[str, Any]]:
         data = await self._request(
@@ -518,6 +598,18 @@ class ShopifyRepository:
         )
         return (data or {}).get("orders") or []
 
+    @staticmethod
+    def _merge_cached_shipping(order: Order, raw: dict[str, Any]) -> Order:
+        """Use cached shipping when Shopify read returns PII-redacted stub."""
+        key = str(order.order_id).lstrip("#").upper()
+        cached = get_cached(key)
+        ship = raw.get("shipping_address") or {}
+        if cached.get("delivery_address") and not shipping_address_is_complete(ship):
+            order.delivery_address = cached["delivery_address"]
+        if cached.get("shipping_phone") and not order.phone:
+            order.phone = cached["shipping_phone"]
+        return order
+
     async def get_order(self, order_id: str) -> Order | None:
         raw = await self._find_raw_order(order_id)
         if not raw:
@@ -528,7 +620,7 @@ class ShopifyRepository:
         refunds = (refunds_data or {}).get("refunds") or []
         order = order_from_shopify(raw, refunds=refunds)
         order.order_id = str(raw.get("name", order_id)).lstrip("#").upper()
-        return order
+        return self._merge_cached_shipping(order, raw)
 
     async def update_order(self, order_id: str, **fields: Any) -> Order | None:
         if fields.get("status") == "cancelled":
@@ -598,9 +690,11 @@ class ShopifyRepository:
                 tracking_url = urls[0] if urls else tracking_url
                 break
 
-        delivery_address = format_delivery_address(
-            raw.get("shipping_address")
-        ) or format_delivery_address(raw.get("billing_address"))
+        shipping = raw.get("shipping_address") or {}
+        delivery_address = format_delivery_address(shipping) or format_delivery_address(
+            raw.get("billing_address")
+        )
+        shipping_phone = ShopifyRepository.extract_phone(raw)
 
         if not tracking_id:
             payload = {
@@ -612,6 +706,9 @@ class ShopifyRepository:
             }
             if delivery_address:
                 payload["delivery_address"] = delivery_address
+                payload["address_source"] = "shipping_address"
+            if shipping_phone:
+                payload["shipping_phone"] = shipping_phone
             return payload
 
         payload = {
@@ -626,6 +723,9 @@ class ShopifyRepository:
         }
         if delivery_address:
             payload["delivery_address"] = delivery_address
+            payload["address_source"] = "shipping_address"
+        if shipping_phone:
+            payload["shipping_phone"] = shipping_phone
         return payload
 
     @staticmethod
@@ -875,7 +975,14 @@ class ShopifyRepository:
 
         self._invalidate_order_cache(order_id)
         updated = (result.get("order") or {}).get("shipping_address") or shipping
+        if not shipping_address_is_complete(updated):
+            updated = shipping
         formatted = format_delivery_address(updated)
+        cache_delivery(
+            display_id,
+            delivery_address=formatted,
+            shipping_phone=str(shipping.get("phone") or ""),
+        )
         logger.info("Shopify address updated order=%s", display_id)
         return {
             "success": True,
@@ -950,6 +1057,20 @@ class ShopifyRepository:
         if not target:
             idx = max(0, min(line_index, len(nodes) - 1))
             target = nodes[idx]
+
+        current_qty = int(target.get("quantity") or 0)
+        if current_qty == int(quantity):
+            # Common PSTN/STT miss-hear: customer says "three", ASR hears "one".
+            # Avoid silent no-op updates; ask for explicit reconfirmation.
+            return {
+                "success": False,
+                "message": (
+                    f"Current quantity is already {current_qty}. "
+                    "Please reconfirm the new quantity as digit and word "
+                    "(for example: 3 (three))."
+                ),
+                "current_quantity": current_qty,
+            }
 
         set_qty = await self._graphql(
             """
@@ -1205,9 +1326,12 @@ class ShopifyRepository:
         if not raw:
             return {"found": False, "message": "Order not found"}
         order = order_from_shopify(raw)
+        order = self._merge_cached_shipping(order, raw)
         display_id = str(raw.get("name", order_id)).lstrip("#").upper()
         lines = self.line_items_from_raw(raw)
-        return {
+        ship = raw.get("shipping_address") or {}
+        pii_redacted = bool(ship) and not shipping_address_is_complete(ship)
+        payload = {
             "found": True,
             "order_id": display_id,
             "customer_name": order.customer_name,
@@ -1224,8 +1348,17 @@ class ShopifyRepository:
             "total_inr": order.total_inr,
             "status": order.status,
             "delivery_address": order.delivery_address,
+            "shipping_phone": order.phone or ShopifyRepository.extract_phone(raw),
+            "address_source": "shipping_address",
             "editable": self.is_unfulfilled(raw) and not raw.get("cancelled_at"),
         }
+        if pii_redacted and not order.delivery_address:
+            payload["shipping_pii_redacted"] = True
+            payload["message_shipping"] = (
+                "Shopify API did not return full shipping address (protected customer data). "
+                "Ask the customer to confirm address on the call, or pass phone in the dial API."
+            )
+        return payload
 
     async def cancel_order_api(self, order_id: str, reason: str = "") -> dict[str, Any]:
         shopify_id = await self._shopify_order_id(order_id)

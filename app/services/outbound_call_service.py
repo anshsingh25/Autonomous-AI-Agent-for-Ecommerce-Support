@@ -96,7 +96,30 @@ class OutboundCallService:
             "Set EXOTEL_OUTBOUND_APP_ID (or EXOTEL_OUTBOUND_FLOW_URL) in .env. "
             "Create an Exotel App Bazaar flow with a Voicebot applet whose dynamic URL is "
             f"{_public_http_base(self._settings)}/voice/outbound/exotel-answer — "
-            "see README Exotel outbound setup."
+            "see docs/EXOTEL_OUTBOUND_SETUP.md"
+        )
+
+    def _exotel_inbound_flow_url(self) -> str:
+        """
+        ExoML app for inbound support (Calls/connect ``Url`` and ExoPhone incoming).
+
+        Uses EXOTEL_INBOUND_APP_ID when set; otherwise same app as outbound.
+        Voicebot dynamic URL: /voice/inbound/exotel-answer or /voice/outbound/exotel-answer
+        (outbound handler falls back to inbound WSS when CustomField is empty).
+        """
+        explicit = getattr(self._settings, "exotel_inbound_flow_url", "").strip()
+        if explicit:
+            return explicit
+        app_id = (
+            getattr(self._settings, "exotel_inbound_app_id", "").strip()
+            or getattr(self._settings, "exotel_outbound_app_id", "").strip()
+        )
+        account = self._settings.exotel_account_sid.strip()
+        if app_id and account:
+            return f"http://my.exotel.com/{account}/exoml/start_voice/{app_id}"
+        raise ValueError(
+            "Set EXOTEL_INBOUND_APP_ID or EXOTEL_OUTBOUND_APP_ID (or EXOTEL_INBOUND_FLOW_URL). "
+            f"Voicebot dynamic URL: {_public_http_base(self._settings)}/voice/inbound/exotel-answer"
         )
 
     async def build_context(
@@ -285,6 +308,14 @@ class OutboundCallService:
             connect_url,
         )
         return text[:120] if text else "exotel-queued"
+
+
+def exotel_outbound_flow_url(settings: Settings | None = None) -> str:
+    return OutboundCallService(settings)._exotel_outbound_flow_url()
+
+
+def exotel_inbound_flow_url(settings: Settings | None = None) -> str:
+    return OutboundCallService(settings)._exotel_inbound_flow_url()
 
 
 outbound_call_service = OutboundCallService()

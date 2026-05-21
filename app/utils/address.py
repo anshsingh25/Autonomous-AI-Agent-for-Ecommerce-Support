@@ -32,4 +32,29 @@ def format_delivery_address(addr: dict[str, Any] | None) -> str | None:
         if text and text not in parts:
             parts.append(text)
 
+    phone = str(addr.get("phone") or "").strip()
+    if phone:
+        phone_label = f"Mobile {phone}"
+        if phone_label not in parts and phone not in parts:
+            parts.append(phone_label)
+
     return ", ".join(parts) if parts else None
+
+
+def shipping_address_is_complete(addr: dict[str, Any] | None) -> bool:
+    """True when Shopify returned real shipping lines (not PII-redacted stub)."""
+    if not addr or isinstance(addr, str):
+        return False
+    return bool(
+        str(addr.get("address1") or "").strip()
+        or str(addr.get("phone") or "").strip()
+        or str(addr.get("name") or "").strip()
+    )
+
+
+def shipping_address_phone(addr: dict[str, Any] | None) -> str | None:
+    """Mobile on the Shopify shipping_address object (Contact / Shipping in Admin)."""
+    if not addr or isinstance(addr, str):
+        return None
+    phone = str(addr.get("phone") or "").strip()
+    return phone or None

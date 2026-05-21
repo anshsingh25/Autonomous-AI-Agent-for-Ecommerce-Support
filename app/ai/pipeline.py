@@ -98,7 +98,7 @@ def _apply_outbound_exotel_serializer(transport, *, transport_type: str) -> None
             call_sid=getattr(serializer, "_call_sid", None),
             params=getattr(serializer, "_params", None),
         )
-        logger.info("Outbound Exotel: using OutboundExotelFrameSerializer (no clear on interrupt)")
+        logger.info("Exotel: using OutboundExotelFrameSerializer (no clear on interrupt)")
     except Exception:
         logger.exception("Failed to apply OutboundExotelFrameSerializer")
 
@@ -133,7 +133,7 @@ async def run_telephony_voice_session(
     transport = await _create_telephony_transport(
         websocket, params, transport_type, call_data
     )
-    if is_outbound:
+    if transport_type == "exotel":
         _apply_outbound_exotel_serializer(transport, transport_type=transport_type)
 
     await run_pipeline(
@@ -144,7 +144,8 @@ async def run_telephony_voice_session(
         label=label,
         use_pipecat_vad=True,
         greet_on_start=True,
-        allow_interruptions=not is_outbound,
+        # Phone calls: false barge-in → Exotel ``clear`` → long dead air (feels disconnected).
+        allow_interruptions=False,
         outbound_context=outbound_ctx,
     )
 

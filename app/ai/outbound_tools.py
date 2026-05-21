@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+from typing import Any
 
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
@@ -24,6 +26,42 @@ from app.utils.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+_NUMBER_WORDS: dict[str, int] = {
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+
+
+def _parse_quantity(raw: object) -> int | None:
+    """Parse numeric or spoken quantity robustly (e.g. 3, '3', 'three')."""
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    text = str(raw).strip().lower()
+    if not text:
+        return None
+    if text.isdigit():
+        return int(text)
+    if text in _NUMBER_WORDS:
+        return _NUMBER_WORDS[text]
+    # Accept phrases like "qty 3" or "3 pieces".
+    m = re.search(r"\b(\d{1,2})\b", text)
+    if m:
+        return int(m.group(1))
+    return None
+
 
 def build_outbound_tools_schema() -> ToolsSchema:
     return ToolsSchema(
@@ -41,7 +79,9 @@ def build_outbound_tools_schema() -> ToolsSchema:
                 name="update_delivery_address",
                 description=(
                     "Update shipping address on this unfulfilled order. "
-                    "Collect full address from customer first, read it back, then call. "
+                    "Customer should give full address in one natural sentence when possible. "
+                    "Read back once (house/area, city, PIN) and get yes, then call. "
+                    "Only ask for missing city or PIN if not provided — do not interrogate field-by-field. "
                     "Say a hold line before calling."
                 ),
                 properties={
@@ -58,6 +98,13 @@ def build_outbound_tools_schema() -> ToolsSchema:
                     "address2": {
                         "type": "string",
                         "description": "Landmark / second line (optional)",
+                    },
+                    "phone": {
+                        "type": "string",
+                        "description": (
+                            "Mobile on shipping address (10-digit India or +91). "
+                            "Omit to keep existing shipping phone."
+                        ),
                     },
                 },
                 required=["address1", "city", "zip_code"],
@@ -166,6 +213,31 @@ def register_outbound_confirmation_tools(
             return None, {"success": False, "message": "Call session expired"}
         return ctx, None
 
+    async def _attach_verified_order_snapshot(ctx, result: dict) -> dict:
+        """
+        Add a fresh Shopify snapshot after successful edits.
+
+        This gives the LLM deterministic post-update facts (address/qty/total)
+        so it can confirm accurately on the call.
+        """
+        if not isinstance(result, dict) or not result.get("success") or not shopify:
+            return result
+        try:
+            await refresh_outbound_context(ctx)
+            snap = await shopify.get_confirmation_order_snapshot(ctx.order_id)
+            if snap.get("found"):
+                result["verified_order"] = {
+                    "order_id": snap.get("order_id"),
+                    "items": snap.get("items"),
+                    "total_inr": snap.get("total_inr"),
+                    "delivery_address": ctx.delivery_address or snap.get("delivery_address"),
+                    "shipping_phone": ctx.customer_phone,
+                    "status": snap.get("status"),
+                }
+        except Exception:
+            logger.exception("Failed to attach verified snapshot for order=%s", ctx.order_id)
+        return result
+
     async def _safe(params: FunctionCallParams, fn, tool_name: str) -> None:
         try:
             logger.info("Outbound tool call %s args=%s", tool_name, params.arguments)
@@ -221,7 +293,9 @@ def register_outbound_confirmation_tools(
                 zip_code=str(p.arguments.get("zip_code", "")),
                 province=str(p.arguments.get("province", "")),
                 address2=str(p.arguments.get("address2", "")),
+                phone=str(p.arguments.get("phone", "")),
             )
+            result = await _attach_verified_order_snapshot(ctx, result)
             await p.result_callback(json.dumps(result))
 
         await _safe(params, _run, "update_delivery_address")
@@ -232,13 +306,27 @@ def register_outbound_confirmation_tools(
             if err:
                 await p.result_callback(json.dumps(err))
                 return
-            qty = int(p.arguments.get("quantity", 0))
+            qty = _parse_quantity(p.arguments.get("quantity"))
+            if qty is None:
+                await p.result_callback(
+                    json.dumps(
+                        {
+                            "success": False,
+                            "message": (
+                                "I could not clearly understand the new quantity. "
+                                "Please say it as digit and word, for example: 3 (three)."
+                            ),
+                        }
+                    )
+                )
+                return
             result = await apply_quantity_update(
                 ctx,
                 quantity=qty,
                 product_name=str(p.arguments.get("product_name", "")),
                 line_index=int(p.arguments.get("line_index", 0)),
             )
+            result = await _attach_verified_order_snapshot(ctx, result)
             await p.result_callback(json.dumps(result))
 
         await _safe(params, _run, "update_item_quantity")
@@ -273,6 +361,7 @@ def register_outbound_confirmation_tools(
                 line_index=int(p.arguments.get("line_index", 0)),
                 quantity=quantity,
             )
+            result = await _attach_verified_order_snapshot(ctx, result)
             await p.result_callback(json.dumps(result))
 
         await _safe(params, _run, "swap_item_variant")

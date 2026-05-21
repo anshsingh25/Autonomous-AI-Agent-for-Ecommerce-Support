@@ -34,6 +34,14 @@ def twilio_stream_twiml(session_id: str | None = None, *, settings: Settings | N
 </Response>"""
 
 
+def exotel_inbound_voicebot_ws_url(*, settings: Settings | None = None) -> str:
+    """WSS for inbound support (no session_id — not an order-confirmation call)."""
+    s = settings or get_settings()
+    ws_url = _ws_base(s).rstrip("/") + "/voice/ws"
+    qs = urlencode({"sample-rate": "8000"})
+    return f"{ws_url}?{qs}"
+
+
 def exotel_voicebot_hint(session_id: str, *, settings: Settings | None = None) -> dict:
     """Exotel voicebot apps use a static WSS URL; pass session_id as query param."""
     s = settings or get_settings()

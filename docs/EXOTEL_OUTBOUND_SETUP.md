@@ -92,5 +92,20 @@ Restart uvicorn after pulling these changes. Some lag from ngrok + Gemini Live +
 | | Inbound | Outbound |
 |---|---------|----------|
 | Customer calls | 09513886363 | System calls customer |
-| Voicebot WSS | `wss://HOST/voice/ws` | `wss://HOST/voice/ws?session_id=...` |
-| ExoML app | Incoming flow on Exophone | `EXOTEL_OUTBOUND_FLOW_URL` on API dial |
+| Voicebot WSS | `wss://HOST/voice/ws?sample-rate=8000` | `wss://HOST/voice/ws?session_id=...` |
+| ExoML on API dial | `EXOTEL_INBOUND_APP_ID` or same as outbound | `EXOTEL_OUTBOUND_APP_ID` |
+| Voicebot dynamic HTTPS | `/voice/inbound/exotel-answer` | `/voice/outbound/exotel-answer` |
+
+**Inbound disconnect on answer:** same root cause — `POST /api/inbound/test-call` must use the **ExoML start URL**, not the ngrok HTTPS answer URL. The Voicebot applet in that flow must call your dynamic URL; it returns JSON `{"url":"wss://..."}`.
+
+You can use one App Bazaar flow for both: point Voicebot to `/voice/outbound/exotel-answer` — without `CustomField` it returns the inbound WSS URL automatically.
+
+Test inbound:
+
+```bash
+curl -X POST http://127.0.0.1:7860/api/inbound/test-call \
+  -H "Content-Type: application/json" \
+  -d '{"phone": "6358762776"}'
+```
+
+Logs when working: `Exotel voicebot (inbound — no session_id)` then `WebSocket accepted`.

@@ -79,6 +79,18 @@ class Settings(BaseSettings):
             "Built from EXOTEL_OUTBOUND_APP_ID if empty."
         ),
     )
+    exotel_inbound_app_id: str = Field(
+        default="",
+        validation_alias="EXOTEL_INBOUND_APP_ID",
+        description=(
+            "App Bazaar flow for inbound support. Falls back to EXOTEL_OUTBOUND_APP_ID if empty."
+        ),
+    )
+    exotel_inbound_flow_url: str = Field(
+        default="",
+        validation_alias="EXOTEL_INBOUND_FLOW_URL",
+        description="ExoML start URL for inbound; built from EXOTEL_INBOUND_APP_ID if empty.",
+    )
 
     # Order data: mock | shopify | api
     data_source: str = Field(default="mock", validation_alias="DATA_SOURCE")

@@ -43,7 +43,7 @@ _UPDATE_HOLD_HINTS: tuple[tuple[str, str], ...] = (
 _OUTBOUND_TOOL_HOLD: dict[str, str] = {
     "list_item_variants": "One moment — I'm checking which sizes and colours are in stock.",
     "swap_item_variant": "Please hold on — I'm updating the size and colour on your order.",
-    "update_delivery_address": "Please hold on — I'm updating your delivery address now.",
+    "update_delivery_address": "One moment — I'm saving your new address.",
     "update_item_quantity": "Just a moment — I'm updating the quantity on your order.",
     "refresh_confirmation_order": "One second — I'm refreshing your order details.",
     "cancel_confirmation_order": "Alright — I'm processing the cancellation now.",

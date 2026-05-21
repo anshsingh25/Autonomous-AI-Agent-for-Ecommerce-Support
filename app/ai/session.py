@@ -23,6 +23,7 @@ from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService, GeminiVADParams
 
 from app.ai.gemini_outbound_llm import OutboundGeminiLiveLLMService
+from app.ai.outbound_hangup_processor import OutboundHangupOnCloseProcessor
 from app.ai.outbound_interruption_filter import OutboundInterruptionFilter
 from app.ai.outbound_short_reply_processor import OutboundShortReplyProcessor
 from app.ai.outbound_user_mute_strategy import OutboundAgentTurnMuteStrategy
@@ -100,10 +101,10 @@ def create_gemini_llm(
         settings=gemini_settings,
         inference_on_context_initialization=False,
     )
-    if outbound_mode:
+    if outbound_mode or use_pipecat_vad:
         OutboundGeminiLiveLLMService.patch_short_reply_listening(llm)
-        if use_pipecat_vad:
-            OutboundGeminiLiveLLMService.patch_outbound_telephony_stability(llm)
+    if use_pipecat_vad:
+        OutboundGeminiLiveLLMService.patch_outbound_telephony_stability(llm)
     if outbound_session_id:
         register_outbound_confirmation_tools(llm, outbound_session_id)
     elif enable_tools:
@@ -126,7 +127,9 @@ async def run_pipeline(
     """Run Gemini Live voice pipeline on any Pipecat transport."""
     out_rate = audio_out_sample_rate or audio_in_sample_rate
     is_outbound = outbound_context is not None
-    is_telephony_outbound = is_outbound and use_pipecat_vad
+    is_telephony = use_pipecat_vad
+    is_telephony_outbound = is_outbound and is_telephony
+    is_telephony_inbound = is_telephony and not is_outbound
     outbound_instruction = OUTBOUND_SYSTEM_INSTRUCTION if is_outbound else None
     llm = create_gemini_llm(
         settings,
@@ -142,13 +145,11 @@ async def run_pipeline(
     llm._opening_sent = False
     context = LLMContext()
     user_params = None
-    if is_telephony_outbound:
+    if is_telephony:
         user_params = LLMUserAggregatorParams(
             user_turn_strategies=UserTurnStrategies(
                 start=[
                     VADUserTurnStartStrategy(enable_interruptions=False),
-                    # Fallback for soft/low-volume PSTN speech:
-                    # if STT hears words but VAD misses start, still trigger user turn.
                     TranscriptionUserTurnStartStrategy(
                         use_interim=True, enable_interruptions=False
                     ),
@@ -174,8 +175,15 @@ async def run_pipeline(
                 customer_name=outbound_context.customer_name,
             )
         )
-    if is_telephony_outbound:
+    if is_telephony:
         output_chain.append(OutboundInterruptionFilter())
+
+    task_holder: list[PipelineTask | None] = [None]
+    if is_telephony_outbound:
+        output_chain.append(
+            OutboundHangupOnCloseProcessor(task_holder, hangup_delay_sec=2.5)
+        )
+
     output_chain.extend([transport.output(), context_aggregator.assistant()])
     processors.extend(output_chain)
 
@@ -191,11 +199,12 @@ async def run_pipeline(
         cancel_on_idle_timeout=False,
         idle_timeout_secs=None,
     )
+    task_holder[0] = task
 
     async def _wait_for_gemini_ready() -> bool:
         """Gemini Live drops audio until LLMContextFrame is handled."""
         # Telephony can start greeting sooner once session is up; 0.8s felt laggy.
-        await asyncio.sleep(0.45 if use_pipecat_vad else 0.25)
+        await asyncio.sleep(0.2 if is_telephony else 0.25)
         poll_interval = 0.1
         max_ticks = 150
         stable_required = 3

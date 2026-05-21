@@ -9,6 +9,7 @@ from app.database.factory import create_order_repository
 from app.database.shopify_store import ShopifyRepository
 from app.models.call_context import OutboundCallContext
 from app.services.call_context_store import get_context, save_context
+from app.utils.address import shipping_address_is_complete
 from app.utils.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,15 @@ async def refresh_outbound_context(ctx: OutboundCallContext) -> OutboundCallCont
     ctx.items = list(snap.get("items") or ctx.items)
     ctx.total_inr = float(snap.get("total_inr") or ctx.total_inr)
     ctx.status = str(snap.get("status") or ctx.status)
-    ctx.delivery_address = snap.get("delivery_address") or ctx.delivery_address
+    new_addr = snap.get("delivery_address")
+    if new_addr and (
+        not ctx.delivery_address
+        or shipping_address_is_complete(
+            (raw or {}).get("shipping_address") if raw else None
+        )
+        or len(str(new_addr)) > len(str(ctx.delivery_address or ""))
+    ):
+        ctx.delivery_address = new_addr
     save_context(ctx)
     return ctx
 

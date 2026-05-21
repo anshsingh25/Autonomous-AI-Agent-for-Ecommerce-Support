@@ -1,4 +1,4 @@
-"""Exotel serializer that avoids ``clear`` on spurious interruptions (outbound)."""
+"""Exotel serializer that avoids ``clear`` on spurious interruptions (inbound + outbound)."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ class OutboundExotelFrameSerializer(ExotelFrameSerializer):
     """
     Exotel ``clear`` flushes all queued audio — causes mid-sentence cutoffs.
 
-    Outbound confirmation calls ignore InterruptionFrame for the wire protocol.
+    PSTN calls ignore InterruptionFrame for the wire protocol (prevents dead-air gaps).
     """
 
     async def serialize(self, frame: Frame) -> str | bytes | None:
