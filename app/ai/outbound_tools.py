@@ -14,11 +14,14 @@ from pipecat.services.llm_service import FunctionCallParams, LLMService
 from app.ai.tool_hold import speak_tool_hold
 from app.database.factory import create_order_repository
 from app.database.shopify_store import ShopifyRepository
-from app.services.call_context_store import get_context
+from app.services.call_context_store import get_context, save_context
+from app.ai.outbound_call_state import remind_after_tool
+from app.services.order_desk_store import order_desk_primary
 from app.services.outbound_order_edits import (
     apply_address_update,
     apply_quantity_update,
     apply_variant_swap,
+    get_confirmation_snapshot,
     list_variants_for_item,
     refresh_outbound_context,
 )
@@ -69,8 +72,8 @@ def build_outbound_tools_schema() -> ToolsSchema:
             FunctionSchema(
                 name="refresh_confirmation_order",
                 description=(
-                    "Reload current order details from Shopify for this confirmation call. "
-                    "Use after any change or if you need updated total/address."
+                    "Reload current order details from the order desk for this confirmation call. "
+                    "Use after any change or if you need updated total/address/phone."
                 ),
                 properties={},
                 required=[],
@@ -78,7 +81,7 @@ def build_outbound_tools_schema() -> ToolsSchema:
             FunctionSchema(
                 name="update_delivery_address",
                 description=(
-                    "Update shipping address on this unfulfilled order. "
+                    "Update shipping address in the order desk (saved for fulfillment). "
                     "Customer should give full address in one natural sentence when possible. "
                     "Read back once (house/area, city, PIN) and get yes, then call. "
                     "Only ask for missing city or PIN if not provided — do not interrogate field-by-field. "
@@ -220,11 +223,11 @@ def register_outbound_confirmation_tools(
         This gives the LLM deterministic post-update facts (address/qty/total)
         so it can confirm accurately on the call.
         """
-        if not isinstance(result, dict) or not result.get("success") or not shopify:
+        if not isinstance(result, dict) or not result.get("success"):
             return result
         try:
             await refresh_outbound_context(ctx)
-            snap = await shopify.get_confirmation_order_snapshot(ctx.order_id)
+            snap = await get_confirmation_snapshot(ctx.order_id)
             if snap.get("found"):
                 result["verified_order"] = {
                     "order_id": snap.get("order_id"),
@@ -233,6 +236,7 @@ def register_outbound_confirmation_tools(
                     "delivery_address": ctx.delivery_address or snap.get("delivery_address"),
                     "shipping_phone": ctx.customer_phone,
                     "status": snap.get("status"),
+                    "data_source": snap.get("data_source", "order_desk"),
                 }
         except Exception:
             logger.exception("Failed to attach verified snapshot for order=%s", ctx.order_id)
@@ -260,7 +264,9 @@ def register_outbound_confirmation_tools(
             if err:
                 await p.result_callback(json.dumps(err))
                 return
-            if not shopify:
+            await refresh_outbound_context(ctx)
+            snap = await get_confirmation_snapshot(ctx.order_id)
+            if not snap.get("found") and not shopify:
                 await p.result_callback(
                     json.dumps(
                         {
@@ -269,13 +275,13 @@ def register_outbound_confirmation_tools(
                             "items": ctx.items,
                             "total_inr": ctx.total_inr,
                             "delivery_address": ctx.delivery_address,
-                            "message": "Using cached order (Shopify not configured)",
+                            "shipping_phone": ctx.customer_phone,
+                            "data_source": "call_context",
+                            "message": "Using cached call context (order desk empty)",
                         }
                     )
                 )
                 return
-            await refresh_outbound_context(ctx)
-            snap = await shopify.get_confirmation_order_snapshot(ctx.order_id)
             await p.result_callback(json.dumps(snap))
 
         await _safe(params, _run, "refresh_confirmation_order")
@@ -296,6 +302,7 @@ def register_outbound_confirmation_tools(
                 phone=str(p.arguments.get("phone", "")),
             )
             result = await _attach_verified_order_snapshot(ctx, result)
+            await remind_after_tool(p.llm, ctx, "update_delivery_address", result)
             await p.result_callback(json.dumps(result))
 
         await _safe(params, _run, "update_delivery_address")
@@ -327,6 +334,7 @@ def register_outbound_confirmation_tools(
                 line_index=int(p.arguments.get("line_index", 0)),
             )
             result = await _attach_verified_order_snapshot(ctx, result)
+            await remind_after_tool(p.llm, ctx, "update_item_quantity", result)
             await p.result_callback(json.dumps(result))
 
         await _safe(params, _run, "update_item_quantity")
@@ -362,6 +370,7 @@ def register_outbound_confirmation_tools(
                 quantity=quantity,
             )
             result = await _attach_verified_order_snapshot(ctx, result)
+            await remind_after_tool(p.llm, ctx, "swap_item_variant", result)
             await p.result_callback(json.dumps(result))
 
         await _safe(params, _run, "swap_item_variant")
@@ -372,18 +381,28 @@ def register_outbound_confirmation_tools(
             if err:
                 await p.result_callback(json.dumps(err))
                 return
-            if not shopify:
-                await p.result_callback(
-                    json.dumps(
-                        {
-                            "success": False,
-                            "message": "Cancellation requires DATA_SOURCE=shopify",
-                        }
-                    )
-                )
-                return
+            from app.services.order_service import order_service
+
             reason = str(p.arguments.get("reason", "")).strip()
-            result = await shopify.cancel_order_api(ctx.order_id, reason=reason)
+            if order_desk_primary():
+                result = await order_service.cancel_order(ctx.order_id, reason=reason)
+            elif shopify:
+                result = await shopify.cancel_order_api(
+                    ctx.order_id,
+                    reason=reason or "Customer cancelled during AI confirmation call",
+                )
+            else:
+                result = {
+                    "success": False,
+                    "message": "Cancellation requires order desk or Shopify",
+                }
+            if result.get("success"):
+                from app.models.call_outcome import CallOutcome
+
+                ctx.shopify_cancel_via_tool = True
+                ctx.outcome = CallOutcome.CANCELLED
+                ctx.final_confirm_received = True
+                save_context(ctx)
             await p.result_callback(json.dumps(result))
 
         await _safe(params, _run, "cancel_confirmation_order")

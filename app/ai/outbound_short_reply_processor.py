@@ -21,6 +21,7 @@ from app.ai.prompts_outbound import (
     ORDER_CONFIRMATION_OPENING_PURPOSE_EN,
     ORDER_CONFIRMATION_OPENING_PURPOSE_HI,
 )
+from app.services.call_context_store import get_context, save_context
 
 logger = logging.getLogger(__name__)
 
@@ -116,11 +117,13 @@ class OutboundShortReplyProcessor(FrameProcessor):
         llm: GeminiLiveLLMService,
         *,
         customer_name: str,
+        session_id: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._llm = llm
         self._customer_name = customer_name or "there"
+        self._session_id = session_id
         self._last_nudge_at = 0.0
         self._nudge_in_flight = False
         self._language_locked = False
@@ -134,6 +137,9 @@ class OutboundShortReplyProcessor(FrameProcessor):
         accidentally trigger opening-purpose nudges and feel out of context.
         """
         if self._language_locked:
+            return False
+        low = (heard or "").strip().lower()
+        if low in ("hello", "hi", "hey", "namaste", "hallo"):
             return False
         # Only during early call window.
         if time.monotonic() - self._started_at > 45:
@@ -198,6 +204,12 @@ class OutboundShortReplyProcessor(FrameProcessor):
             )
             await self._llm.queue_frame(LLMRunFrame(), FrameDirection.DOWNSTREAM)
             self._language_locked = True
+            if self._session_id:
+                ctx = get_context(self._session_id)
+                if ctx:
+                    ctx.language = lang
+                    ctx.opening_complete = True
+                    save_context(ctx)
         finally:
             self._nudge_in_flight = False
 

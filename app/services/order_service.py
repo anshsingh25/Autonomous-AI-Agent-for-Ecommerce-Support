@@ -9,6 +9,12 @@ from app.database.factory import create_order_repository
 from app.database.http_store import HttpStoreRepository
 from app.database.shopify_store import ShopifyRepository
 from app.database.protocol import OrderRepository
+from app.database.mock_db import Order
+from app.services.order_desk_store import (
+    full_delivery_address,
+    get_order_desk_store,
+    order_desk_primary,
+)
 from app.utils.config import get_settings
 
 
@@ -31,12 +37,17 @@ def _default_eta_date_str() -> str:
     return _format_date(_add_business_days(now, 3))
 
 
-def _delivery_address_fields(order) -> dict[str, Any]:
+def _delivery_address_fields(order, *, desk_rec: dict[str, Any] | None = None) -> dict[str, Any]:
     """Shipping address (+ mobile on that address) for voice tools."""
-    if order.delivery_address:
+    addr = order.delivery_address
+    if desk_rec:
+        full = full_delivery_address(desk_rec)
+        if full:
+            addr = full
+    if addr:
         fields: dict[str, Any] = {
-            "delivery_address": order.delivery_address,
-            "address_source": "shipping_address",
+            "delivery_address": addr,
+            "address_source": "order_desk" if desk_rec else "shipping_address",
         }
         if order.phone:
             fields["shipping_phone"] = order.phone
@@ -55,15 +66,24 @@ class OrderService:
     def __init__(self, database: OrderRepository | None = None) -> None:
         self._db = database or create_order_repository(get_settings())
 
+    async def _resolve_order(self, order_id: str) -> Order | None:
+        """Order desk export overrides Shopify/mock when enabled."""
+        if order_desk_primary():
+            desk = get_order_desk_store()
+            rec = desk.get(order_id)
+            if rec:
+                return desk.to_order(rec)
+        return await self._db.get_order(order_id)
+
     async def get_customer_phone(self, order_id: str) -> str | None:
         """Phone on file for outbound calls."""
-        order = await self._db.get_order(order_id)
+        order = await self._resolve_order(order_id)
         if not order or not order.phone:
             return None
         return order.phone.strip() or None
 
     async def get_order_status(self, order_id: str) -> dict[str, Any]:
-        order = await self._db.get_order(order_id)
+        order = await self._resolve_order(order_id)
         if not order:
             return {
                 "found": False,
@@ -78,7 +98,10 @@ class OrderService:
             "total_inr": order.total_inr,
             "placed_at": order.placed_at.isoformat(),
         }
-        payload.update(_delivery_address_fields(order))
+        desk_rec = get_order_desk_store().get(order_id) if order_desk_primary() else None
+        payload.update(_delivery_address_fields(order, desk_rec=desk_rec))
+        if desk_rec:
+            payload["data_source"] = "order_desk"
         return payload
 
     async def refund_status(self, order_id: str) -> dict[str, Any]:
@@ -89,7 +112,7 @@ class OrderService:
             if raw is not None:
                 return _normalize_refund_response(order_id, raw)
 
-        order = await self._db.get_order(order_id)
+        order = await self._resolve_order(order_id)
         if not order:
             return {"found": False, "message": f"No order found with ID {order_id.upper()}."}
         return {
@@ -101,12 +124,28 @@ class OrderService:
         }
 
     async def cancel_order(self, order_id: str, reason: str = "") -> dict[str, Any]:
+        if order_desk_primary():
+            desk = get_order_desk_store()
+            if desk.get(order_id):
+                desk.update_record(
+                    order_id,
+                    {"status": "cancelled", "call_status": "cancelled", "notes": reason},
+                )
+                return {
+                    "found": True,
+                    "success": True,
+                    "order_id": order_id,
+                    "message": "Order marked cancelled in order desk.",
+                    "data_source": "order_desk",
+                    "reason": reason or "Customer request via phone support",
+                }
+
         if isinstance(self._db, (ShopifyRepository, HttpStoreRepository)):
             raw = await self._db.cancel_order_api(order_id, reason=reason)
             if raw is not None:
                 return _normalize_cancel_response(order_id, raw)
 
-        order = await self._db.get_order(order_id)
+        order = await self._resolve_order(order_id)
         if not order:
             return {"found": False, "success": False, "message": "Order not found."}
         if not order.cancel_allowed:
@@ -138,7 +177,7 @@ class OrderService:
             if raw is not None:
                 return _normalize_track_response(order_id, raw)
 
-        order = await self._db.get_order(order_id)
+        order = await self._resolve_order(order_id)
         if not order:
             return {"found": False, "message": "Order not found."}
         if not order.tracking_id:

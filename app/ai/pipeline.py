@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from fastapi import WebSocket
 from pipecat.runner.utils import (
@@ -32,8 +33,36 @@ from app.utils.config import Settings
 
 logger = logging.getLogger(__name__)
 
+_UUID_SEARCH = re.compile(
+    "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+    re.I,
+)
 
-def _telephony_params_factory(*, outbound: bool = False) -> FastAPIWebsocketParams:
+
+def _uuid_in_string(text: object) -> str | None:
+    """First UUID-like substring (outbound ``session_id`` format)."""
+    t = str(text or "").strip()
+    if not t:
+        return None
+    m = _UUID_SEARCH.search(t)
+    return m.group(0) if m else None
+
+
+def _telephony_params_factory(
+    *, outbound: bool = False, outbound_browser_parity: bool = False
+) -> FastAPIWebsocketParams:
+    """
+    Outbound PSTN with ``outbound_browser_parity``: same turn-taking stack as ``/browser/outbound``
+    (Gemini VAD, interruptions) while keeping Exotel/Twilio 8 kHz media.
+    """
+    if outbound and outbound_browser_parity:
+        return FastAPIWebsocketParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            audio_in_sample_rate=TWILIO_SAMPLE_RATE,
+            audio_out_sample_rate=TWILIO_SAMPLE_RATE,
+            vad_analyzer=None,
+        )
     vad = outbound_telephony_vad_analyzer() if outbound else twilio_vad_analyzer()
     return FastAPIWebsocketParams(
         audio_in_enabled=True,
@@ -44,9 +73,13 @@ def _telephony_params_factory(*, outbound: bool = False) -> FastAPIWebsocketPara
     )
 
 
-def _telephony_transport_params(*, outbound: bool = False) -> dict:
+def _telephony_transport_params(
+    *, outbound: bool = False, outbound_browser_parity: bool = False
+) -> dict:
     def factory() -> FastAPIWebsocketParams:
-        return _telephony_params_factory(outbound=outbound)
+        return _telephony_params_factory(
+            outbound=outbound, outbound_browser_parity=outbound_browser_parity
+        )
 
     return {
         "twilio": factory,
@@ -67,13 +100,20 @@ def _session_id_from_call_data(transport_type: str, call_data: dict) -> str | No
     if transport_type == "exotel":
         cp = call_data.get("custom_parameters")
         if isinstance(cp, dict):
-            sid = str(cp.get("session_id") or "").strip()
-            if sid:
-                return sid
-            for key in cp:
-                k = str(key).strip()
-                if len(k) >= 32 and k.count("-") >= 4:
-                    return k
+            for key in (
+                "session_id",
+                "SessionId",
+                "CustomField",
+                "custom_field",
+                "CUSTOMFIELD",
+            ):
+                sid = str(cp.get(key) or "").strip()
+                if sid:
+                    return sid
+            for _k, v in cp.items():
+                u = _uuid_in_string(v)
+                if u:
+                    return u
     elif transport_type == "twilio":
         body = call_data.get("body")
         if isinstance(body, dict):
@@ -128,7 +168,11 @@ async def run_telephony_voice_session(
     label = "outbound-confirm" if is_outbound else "inbound"
 
     params = _get_transport_params(
-        transport_type, _telephony_transport_params(outbound=is_outbound)
+        transport_type,
+        _telephony_transport_params(
+            outbound=is_outbound,
+            outbound_browser_parity=is_outbound,
+        ),
     )
     transport = await _create_telephony_transport(
         websocket, params, transport_type, call_data
@@ -142,11 +186,13 @@ async def run_telephony_voice_session(
         audio_in_sample_rate=TWILIO_SAMPLE_RATE,
         audio_out_sample_rate=TWILIO_SAMPLE_RATE,
         label=label,
-        use_pipecat_vad=True,
+        # PSTN outbound: match ``run_browser_outbound_session`` (Gemini VAD, interruptions).
+        # PSTN inbound: Silero turns + interruptions off (prior behavior).
+        use_pipecat_vad=not is_outbound,
         greet_on_start=True,
-        # Phone calls: false barge-in → Exotel ``clear`` → long dead air (feels disconnected).
-        allow_interruptions=False,
+        allow_interruptions=is_outbound,
         outbound_context=outbound_ctx,
+        pstn_wire=True,
     )
 
 

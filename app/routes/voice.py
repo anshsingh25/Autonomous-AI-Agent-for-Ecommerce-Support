@@ -22,6 +22,41 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/voice", tags=["voice"])
 
 
+async def _exotel_outbound_sid_from_request(
+    request: Request, query_session_id: str = ""
+) -> str:
+    """
+    Resolve outbound session id from Exotel's Voicebot HTTPS callback.
+
+    Exotel may send ``CustomField`` in the query string or (commonly) in a
+    ``application/x-www-form-urlencoded`` POST body. If we miss it, we return
+    an inbound WSS URL without ``session_id`` and the **outbound** call usually
+    disconnects right after answer.
+    """
+    sid = (query_session_id or "").strip()
+    if sid:
+        return sid
+    qp = dict(request.query_params)
+    for key in ("CustomField", "custom_field", "session_id", "SessionId"):
+        v = (qp.get(key) or "").strip()
+        if v:
+            return v
+    if request.method in ("POST", "PUT", "PATCH"):
+        ctype = (request.headers.get("content-type") or "").lower()
+        if "application/x-www-form-urlencoded" in ctype:
+            try:
+                body = await request.body()
+                form_qs = parse_qs(body.decode("utf-8"))
+                form = {k: (v[0] if v else "") for k, v in form_qs.items()}
+                for key in ("CustomField", "custom_field", "session_id", "SessionId"):
+                    v = (form.get(key) or "").strip()
+                    if v:
+                        return v
+            except Exception:
+                logger.warning("Could not parse exotel-answer form body", exc_info=True)
+    return ""
+
+
 def get_twilio_service(settings: Settings = Depends(get_settings)) -> TwilioService:
     return TwilioService(settings)
 
@@ -140,12 +175,8 @@ async def outbound_exotel_answer(
 
     Set this URL on the Voicebot applet in App Bazaar (not on Calls/connect ``Url``).
     """
+    sid = await _exotel_outbound_sid_from_request(request, session_id)
     qp = dict(request.query_params)
-    sid = (
-        session_id.strip()
-        or (qp.get("CustomField") or "").strip()
-        or (qp.get("custom_field") or "").strip()
-    )
     logger.info(
         "Exotel voicebot URL fetch method=%s session_id=%s query_keys=%s",
         request.method,
@@ -154,6 +185,11 @@ async def outbound_exotel_answer(
     )
     if not sid:
         ws_url = exotel_inbound_voicebot_ws_url(settings=settings)
+        logger.warning(
+            "Exotel outbound dynamic URL had no CustomField/session_id (query or form). "
+            "Falling back to inbound WSS — outbound confirmation calls will misbehave or drop. "
+            "Check App Bazaar Voicebot → your HTTPS URL and Exotel CustomField passthrough."
+        )
         logger.info(
             "Exotel voicebot (inbound — no session_id / CustomField) → %s",
             ws_url,

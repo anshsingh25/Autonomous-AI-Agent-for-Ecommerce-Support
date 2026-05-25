@@ -13,8 +13,15 @@ from app.database.factory import create_order_repository
 from app.database.shopify_store import ShopifyRepository
 from app.models.call_context import OutboundCallContext
 from app.services.call_context_store import save_context
+from app.services.order_desk_store import (
+    full_delivery_address,
+    get_order_desk_store,
+    order_desk_primary,
+)
 from app.services.order_service import OrderService, order_service
+from app.models.order_line_item import OrderLineItemSnapshot
 from app.utils.config import Settings, get_settings
+from app.utils.exotel_response import exotel_twilio_rest_message
 
 logger = logging.getLogger(__name__)
 
@@ -142,16 +149,44 @@ class OutboundCallService:
             )
 
         session_id = str(uuid.uuid4())
-        line_items = []
+        line_items: list[OrderLineItemSnapshot] = []
         shopify_order_id = None
+
+        if order_desk_primary():
+            desk_rec = get_order_desk_store().get(str(result["order_id"]))
+            if desk_rec:
+                shopify_order_id = desk_rec.get("shopify_order_id")
+                for li in desk_rec.get("line_items") or []:
+                    if not isinstance(li, dict):
+                        continue
+                    line_items.append(
+                        OrderLineItemSnapshot(
+                            line_item_id=int(li.get("line_item_id") or 0),
+                            title=str(li.get("title") or "Item"),
+                            quantity=int(li.get("quantity") or 1),
+                            variant_title=li.get("variant_title"),
+                            sku=li.get("sku"),
+                            product_id=li.get("product_id"),
+                            variant_id=li.get("variant_id"),
+                        )
+                    )
+
         settings = get_settings()
-        if settings.data_source.lower() == "shopify":
+        if not line_items and settings.data_source.lower() == "shopify":
             repo = create_order_repository(settings)
             if isinstance(repo, ShopifyRepository):
                 raw = await repo.get_raw_order(str(result["order_id"]))
                 if raw:
                     shopify_order_id = int(raw["id"])
                     line_items = repo.line_items_from_raw(raw)
+
+        delivery_address = result.get("delivery_address")
+        if order_desk_primary():
+            desk_rec = get_order_desk_store().get(str(result["order_id"]))
+            if desk_rec:
+                full_addr = full_delivery_address(desk_rec)
+                if full_addr:
+                    delivery_address = full_addr
 
         ctx = OutboundCallContext(
             session_id=session_id,
@@ -162,7 +197,7 @@ class OutboundCallService:
             line_items=line_items,
             total_inr=float(result.get("total_inr") or 0),
             status=str(result.get("status") or "processing"),
-            delivery_address=result.get("delivery_address"),
+            delivery_address=delivery_address,
             shopify_order_id=shopify_order_id,
         )
         save_context(ctx)
@@ -290,7 +325,9 @@ class OutboundCallService:
                 auth=(api_key, token),
             )
             if response.status_code >= 400:
-                detail = (response.text or "")[:500]
+                raw = (response.text or "")[:2000]
+                short = exotel_twilio_rest_message(raw)
+                detail = short or raw[:500]
                 logger.error(
                     "Exotel connect failed %s: %s",
                     response.status_code,

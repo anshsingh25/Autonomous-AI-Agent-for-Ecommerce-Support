@@ -9,6 +9,7 @@ If the phone rings but **disconnects right after you pick up**, Exotel is not co
 3. **ngrok stopped** or wrong port — Exotel cannot open `wss://YOUR-NGROK/voice/ws`.
 4. **Dynamic URL not set** on Voicebot — must point to `/voice/outbound/exotel-answer`.
 5. **Wrong response shape** — HTTPS dynamic URL must return JSON `{"url":"wss://..."}`, not plain text.
+6. **CustomField dropped** — The app reads `CustomField` / `session_id` from the **query string or form POST**. If logs show `(missing)` then `no session_id / CustomField → inbound`, the Voicebot HTTPS callback is not passing the field → fix mapping in App Bazaar / Exotel (outbound disconnects).
 
 ## Step 1 — App Bazaar flow
 
@@ -41,6 +42,7 @@ EXOTEL_API_KEY=...
 EXOTEL_API_TOKEN=...
 EXOTEL_CALLER_ID=09513886363
 EXOTEL_API_HOST=https://api.exotel.com
+# India (Mumbai) cluster instead: EXOTEL_API_HOST=https://api.in.exotel.com
 
 PUBLIC_WS_URL=wss://YOUR-NGROK-ID.ngrok-free.app
 PUBLIC_HTTP_URL=https://YOUR-NGROK-ID.ngrok-free.app
@@ -86,6 +88,8 @@ If Aria stops talking halfway through a sentence:
 - Customer mic stays muted until **`TTSStoppedFrame`** (not brief 0.35s gaps between audio chunks).
 
 Restart uvicorn after pulling these changes. Some lag from ngrok + Gemini Live + 8 kHz PSTN is normal.
+
+**Match browser outbound:** outbound confirmation on the phone uses the same AI stack as `/browser/outbound` — Gemini native VAD, short-reply flushing, `allow_interruptions=True`, no Pipecat Silero on that path (media is still **8 kHz** so audio quality differs from browser 16→24 kHz).
 
 ## Inbound vs outbound
 

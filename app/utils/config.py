@@ -49,6 +49,64 @@ class Settings(BaseSettings):
         validation_alias="GEMINI_MAX_TOKENS",
         description="Caps reply length for shorter, clearer voice turns.",
     )
+    gemini_outbound_vad_prefix_padding_ms: int = Field(
+        default=62,
+        validation_alias="GEMINI_OUTBOUND_VAD_PREFIX_PADDING_MS",
+        ge=40,
+        le=300,
+        description="Outbound: ms before speech counts as started.",
+    )
+    gemini_outbound_vad_silence_duration_ms: int = Field(
+        default=145,
+        validation_alias="GEMINI_OUTBOUND_VAD_SILENCE_DURATION_MS",
+        ge=90,
+        le=900,
+        description=(
+            "Outbound: silence after last word before your turn ends (ms). Lower = faster reply when done; "
+            "try 115–165 on sluggish phone paths. Raise if bot talks during your pauses."
+        ),
+    )
+    gemini_outbound_transcription_debounce_sec: float = Field(
+        default=0.03,
+        validation_alias="GEMINI_OUTBOUND_TRANSCRIPTION_DEBOUNCE_SEC",
+        ge=0.03,
+        le=0.4,
+        description="Outbound: throttle duplicate STT fragments (seconds).",
+    )
+    gemini_outbound_transcription_flush_short_sec: float = Field(
+        default=0.028,
+        validation_alias="GEMINI_OUTBOUND_TRANSCRIPTION_FLUSH_SHORT_SEC",
+        ge=0.025,
+        le=0.5,
+        description="Outbound: STT flush while a short reply is still forming (yes/hindi/etc.).",
+    )
+    gemini_outbound_transcription_flush_ultra_short_sec: float = Field(
+        default=0.025,
+        validation_alias="GEMINI_OUTBOUND_TRANSCRIPTION_FLUSH_ULTRA_SHORT_SEC",
+        ge=0.02,
+        le=0.2,
+        description=(
+            "Outbound: STT flush when buffer is a complete one-word answer "
+            "(yes/no/english/hindi). Longer sentences still use FLUSH_LONG."
+        ),
+    )
+    gemini_outbound_transcription_flush_long_sec: float = Field(
+        default=0.052,
+        validation_alias="GEMINI_OUTBOUND_TRANSCRIPTION_FLUSH_LONG_SEC",
+        ge=0.035,
+        le=0.6,
+        description="Outbound: STT flush when Gemini streams without sentence boundary — lower = quicker.",
+    )
+    tool_hold_pause_sec: float = Field(
+        default=0.28,
+        validation_alias="TOOL_HOLD_PAUSE_SEC",
+        ge=0.0,
+        le=3.0,
+        description=(
+            "Seconds after spoken 'hold' line before tool/API runs. "
+            "Previously ~0.9s blocked every tool call (heavy dead air on phone)."
+        ),
+    )
 
     twilio_account_sid: str = Field(default="", validation_alias="TWILIO_ACCOUNT_SID")
     twilio_auth_token: str = Field(default="", validation_alias="TWILIO_AUTH_TOKEN")
@@ -63,8 +121,12 @@ class Settings(BaseSettings):
         description="ExoPhone number for outbound CallerId",
     )
     exotel_api_host: str = Field(
-        default="https://api.in.exotel.com",
+        default="https://api.exotel.com",
         validation_alias="EXOTEL_API_HOST",
+        description=(
+            "Match Exotel **account** region in dashboard (Singapore→api.exotel.com; "
+            "India cluster→api.in.exotel.com), not your physical location."
+        ),
     )
     exotel_outbound_app_id: str = Field(
         default="",
@@ -95,6 +157,24 @@ class Settings(BaseSettings):
     # Order data: mock | shopify | api
     data_source: str = Field(default="mock", validation_alias="DATA_SOURCE")
 
+    order_desk_enabled: bool = Field(
+        default=True,
+        validation_alias="ORDER_DESK_ENABLED",
+        description="Read/update customer & shipping from data/order_desk.json (PHP UI)",
+    )
+    order_desk_json_path: str = Field(
+        default="data/order_desk.json",
+        validation_alias="ORDER_DESK_JSON_PATH",
+    )
+    order_desk_sync_secret: str = Field(
+        default="",
+        validation_alias="ORDER_DESK_SYNC_SECRET",
+        description=(
+            "Shared secret for POST /api/order-desk/* (PHP post-save, scripts). "
+            "Header: X-Order-Desk-Sync-Secret. When unset, sync routes are disabled."
+        ),
+    )
+
     shopify_shop_domain: str = Field(default="", validation_alias="SHOPIFY_SHOP_DOMAIN")
     shopify_access_token: str = Field(default="", validation_alias="SHOPIFY_ACCESS_TOKEN")
     shopify_api_version: str = Field(default="2024-10", validation_alias="SHOPIFY_API_VERSION")
@@ -107,6 +187,14 @@ class Settings(BaseSettings):
         default=True,
         validation_alias="AUTO_CONFIRMATION_ENABLED",
         description="Auto-dial customers for unfulfilled Shopify orders via webhook",
+    )
+    confirmation_webhook_require_tag: str = Field(
+        default="",
+        validation_alias="CONFIRMATION_WEBHOOK_REQUIRE_TAG",
+        description=(
+            "If set, orders/create and orders/paid webhooks only auto-dial when this tag "
+            "is on the order (Shopify tags and/or order desk tags). Empty = dial all eligible."
+        ),
     )
     store_api_base_url: str = Field(default="", validation_alias="STORE_API_BASE_URL")
     store_api_key: str = Field(default="", validation_alias="STORE_API_KEY")

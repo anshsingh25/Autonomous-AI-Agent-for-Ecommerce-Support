@@ -29,7 +29,7 @@ async def main() -> int:
     key = os.environ.get("EXOTEL_API_KEY", "").strip()
     token = os.environ.get("EXOTEL_API_TOKEN", "").strip()
     caller = os.environ.get("EXOTEL_CALLER_ID", "").strip()
-    host = os.environ.get("EXOTEL_API_HOST", "https://api.in.exotel.com").rstrip("/")
+    host = os.environ.get("EXOTEL_API_HOST", "https://api.exotel.com").rstrip("/")
     http_base = os.environ.get("PUBLIC_HTTP_URL", "").strip()
     if not http_base:
         ws = os.environ.get("PUBLIC_WS_URL", "").strip()

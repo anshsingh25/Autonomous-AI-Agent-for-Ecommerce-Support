@@ -39,17 +39,29 @@ class OutboundCallContext:
     user_transcripts: list[str] = field(default_factory=list)
     outcome: CallOutcome = CallOutcome.PENDING
     outcome_applied: bool = False
+    final_confirm_received: bool = False
+    shopify_cancel_via_tool: bool = False
+    language: str | None = None
+    opening_complete: bool = False
+    last_tool_name: str | None = None
+    last_tool_success: bool | None = None
+    last_tool_summary: str | None = None
 
     def summary_for_prompt(self) -> str:
         if self.line_items:
             items_text = "; ".join(li.spoken_summary() for li in self.line_items)
         else:
             items_text = ", ".join(self.items) if self.items else "your items"
-        addr = self.delivery_address or "address on file"
+        addr = (self.delivery_address or "").strip()
+        addr_part = (
+            f"Full delivery address (order desk — read entire line to customer): {addr}."
+            if addr
+            else "Full delivery address: not on file — ask customer to confirm on call."
+        )
         return (
             f"Order {self.order_id} for {self.customer_name}: {items_text}, "
             f"total ₹{self.total_inr:.0f}, status {self.status}. "
-            f"Delivery: {addr}."
+            f"{addr_part}"
         )
 
     def to_dict(self) -> dict[str, Any]:

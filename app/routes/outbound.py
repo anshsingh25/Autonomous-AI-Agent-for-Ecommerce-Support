@@ -14,6 +14,10 @@ from app.services.order_confirmation_service import (
 )
 from app.services.telephony_twiml import exotel_voicebot_hint
 from app.utils.config import Settings, get_settings
+from app.utils.exotel_response import (
+    http_proxy_status_for_exotel,
+    parse_exotel_connect_error_message,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/outbound", tags=["outbound"])
@@ -64,4 +68,14 @@ async def start_confirm_order_call(
         and result.get("status") == "dialing"
     ):
         result["exotel_setup"] = exotel_voicebot_hint(result["session_id"], settings=settings)
+
+    if result.get("status") == "error":
+        msg = str(result.get("message") or "")
+        code, detail = parse_exotel_connect_error_message(msg)
+        if code is not None:
+            raise HTTPException(
+                status_code=http_proxy_status_for_exotel(code),
+                detail=detail[:800] if detail else msg[:800],
+            )
+
     return result

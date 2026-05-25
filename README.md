@@ -53,6 +53,9 @@ When `DATA_SOURCE=shopify` and `AUTO_CONFIRMATION_ENABLED=true`:
 
 Outbound only dials orders that are **unfulfilled** and **not** tagged `AI Confirmed` / `confirmed` / `Proceed` (with confirm) / `Cancelled` / `AI Call In Progress`.
 
+- Optional **Shopify webhook filter:** set `CONFIRMATION_WEBHOOK_REQUIRE_TAG` (e.g. `Call AI Confirm`) — `orders/create` and `orders/paid` only auto-dial when that tag appears on Shopify **or** on the row in order desk (`data/order_desk.json`). Useful with Shopify Flow: add tag → webhook fires → dial only tagged rows.
+- **Tag batch dial:** `GET /api/shopify/confirmation/tagged-pending?tag=Your+Tag` — list phones + orders; `POST /api/shopify/confirmation/dial-tagged` with JSON `{"tag": "Your Tag", "limit": 20, "dry_run": false}` — call every matching row that has a number (desk or Shopify).
+
 - **Web desk:** [http://127.0.0.1:7860/browser/confirmation-desk](http://127.0.0.1:7860/browser/confirmation-desk) — refresh unconfirmed orders, **Call customer** per row, or **Call all ready**
 - `GET /api/shopify/confirmation/pending` — list orders that still need a call
 - `POST /api/shopify/confirmation/scan-unfulfilled?dry_run=true` — preview who would be dialed
@@ -89,12 +92,41 @@ Aria uses a dedicated **outbound prompt** (not the inbound support script): conf
 | `DATA_SOURCE` | `mock`, `shopify`, or `api` |
 | `SHOPIFY_SHOP_DOMAIN` | `your-store.myshopify.com` |
 | `SHOPIFY_ACCESS_TOKEN` | Admin API access token |
+| `AUTO_CONFIRMATION_ENABLED` | Shopify `orders/*` webhooks enqueue confirmation dials when `true` |
+| `CONFIRMATION_WEBHOOK_REQUIRE_TAG` | If set (e.g. `Call AI Confirm`), webhooks dial only orders with this tag |
 | `TELEPHONY_PROVIDER` | `mock`, `twilio`, or `exotel` |
 | `PUBLIC_WS_URL` | Public `wss://` base URL (e.g. ngrok) |
 | `PUBLIC_HTTP_URL` | HTTPS webhooks (optional; inferred from `PUBLIC_WS_URL`) |
 | `EXOTEL_*` | Exotel credentials for India outbound/inbound |
 
-See `.env.example` for all options.
+See `.env.example` for all options (including **`GEMINI_OUTBOUND_VAD_*`**, **`GEMINI_OUTBOUND_TRANSCRIPTION_*`**, and **`TOOL_HOLD_PAUSE_SEC`** — gap before order tools run after the hold line).
+
+## Architecture (quick map)
+
+| Area | Purpose |
+|------|---------|
+| `app/main.py` | FastAPI app, routers, `/health`, ngrok warning on startup |
+| `app/routes/voice.py` | `/voice/incoming`, `/voice/ws`, Exotel **`/voice/outbound/exotel-answer`**, **`/voice/inbound/exotel-answer`** |
+| `app/routes/outbound.py` | `POST /api/outbound/confirm-order` |
+| `app/routes/inbound.py` | `POST /api/inbound/test-call` (Exotel inbound support dial) |
+| `app/routes/shopify_webhooks.py` | Webhooks (HMAC optional), confirmation desk helpers |
+| `app/routes/order_desk_sync.py` | Secured order desk ↔ Shopify sync (lines, totals, shipping, notes) |
+| `app/services/order_confirmation_service.py` | Dial orchestration + Shopify tagging |
+| `app/services/outbound_call_service.py` | Build `OutboundCallContext`, Twilio / Exotel `Calls/connect` |
+| `app/services/call_context_store.py` | **In-memory** outbound sessions (**2 h TTL**); replace with Redis for multi-worker |
+| `app/ai/pipeline.py` | Browser vs PSTN transports; **`CustomField`** / UUID session resolution |
+| `app/ai/session.py` | Gemini Live pipeline + outbound VAD from settings |
+| `order_desk/` + `ORDER_DESK_*` | PHP UI + JSON for PII/order lines when Shopify omits phone |
+
+## Production / operations checklist
+
+- **Never commit `.env`** — webhook secrets and telephony credentials are plaintext in config.
+- **Shopify:** set **`SHOPIFY_WEBHOOK_SECRET`** — if unset, webhook HMAC verification is skipped (fine for dev only).
+- **Public HTTP + WSS:** `PUBLIC_HTTP_URL` / `PUBLIC_WS_URL` must stay on the **same live tunnel/domain** (`GET /voice/exotel-setup`; startup warns on ngrok mismatch).
+- **Outbound answer drops:** Voicebot applet → dynamic HTTPS **`/voice/outbound/exotel-answer`**, **`CustomField`** must reach callback (see `docs/EXOTEL_OUTBOUND_SETUP.md`).
+- **Unauthenticated HTTP:** `POST /api/outbound/confirm-order`, `GET /api/orders/*`, `POST /api/shopify/confirmation/*`, **`POST …/finalize/{session_id}`** assume a **trusted network** or reverse-proxy auth — add your own gateway API key before exposing to the Internet.
+- **Scale-out:** outbound context is **per-process RAM** — run one worker behind the load balancer, or port `call_context_store` to Redis.
+- **`CORS`** is `*` with credentials — tighten `allow_origins` when you expose a branded web origin only.
 
 ## Project layout
 

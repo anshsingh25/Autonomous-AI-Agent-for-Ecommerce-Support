@@ -17,17 +17,42 @@ from pipecat.services.google.gemini_live.llm import (
 from pipecat.services.google.gemini_live.llm import LiveServerMessage
 
 from app.ai.outbound_short_reply_processor import detect_language_choice
+from app.utils.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-_INBOUND_TRANSCRIPTION_TIMEOUT_SEC = 0.14
-_SHORT_REPLY_TRANSCRIPTION_TIMEOUT_SEC = 0.12
+_INBOUND_TRANSCRIPTION_TIMEOUT_SEC_FALLBACK = 0.052
+_SHORT_REPLY_TRANSCRIPTION_TIMEOUT_SEC_FALLBACK = 0.028
+_ULTRA_SHORT_TRANSCRIPTION_TIMEOUT_SEC_FALLBACK = 0.025
 _LANGUAGE_PHRASE_MAX_LEN = 64
 
 _SHORT_UTTERANCE = re.compile(
     r"^\s*(yes|no|yeah|yep|nahi|haan|han|ji|ok|okay|sure|fine|english|hindi|"
     r"angrezi|inglish|cancel|haan\s+ji|theek)\s*[.!]?\s*$",
     re.IGNORECASE,
+)
+
+_INSTANT_SHORT_TOKENS = frozenset(
+    {
+        "yes",
+        "no",
+        "yeah",
+        "yep",
+        "nahi",
+        "haan",
+        "han",
+        "ji",
+        "ok",
+        "okay",
+        "sure",
+        "fine",
+        "english",
+        "hindi",
+        "angrezi",
+        "inglish",
+        "cancel",
+        "theek",
+    }
 )
 
 _SHORT_REPLY_BUILDING = (
@@ -47,6 +72,48 @@ _SHORT_REPLY_BUILDING = (
     "language",
 )
 
+# Early partial STT while the customer is still saying a one-word answer.
+_SHORT_BUILDING_PREFIXES = (
+    "y",
+    "ye",
+    "yes",
+    "n",
+    "no",
+    "na",
+    "nah",
+    "hi",
+    "hin",
+    "hindi",
+    "en",
+    "eng",
+    "engli",
+    "english",
+    "ha",
+    "haa",
+    "haan",
+    "ok",
+    "ji",
+    "an",
+    "ang",
+    "the",
+    "thee",
+    "theek",
+)
+
+
+def _normalize_short_token(text: str) -> str:
+    return re.sub(r"[^\w\s]", "", (text or "").strip().lower())
+
+
+def _buffer_is_instant_short(buf: str) -> bool:
+    """Complete one-word answers — flush immediately, no silence wait."""
+    tok = _normalize_short_token(buf)
+    if not tok:
+        return False
+    if tok in _INSTANT_SHORT_TOKENS:
+        return True
+    return bool(detect_language_choice(buf))
+
 
 def _buffer_is_complete_short_reply(buf: str) -> bool:
     cleaned = buf.strip()
@@ -56,12 +123,14 @@ def _buffer_is_complete_short_reply(buf: str) -> bool:
 
 
 def _buffer_is_building_short_reply(buf: str) -> bool:
-    cleaned = buf.strip().lower()
+    cleaned = buf.strip().lower().strip(".,!?")
     if not cleaned or len(cleaned) > _LANGUAGE_PHRASE_MAX_LEN:
         return False
-    if _buffer_is_complete_short_reply(buf):
+    if _buffer_is_complete_short_reply(buf) or _buffer_is_instant_short(buf):
         return True
     if detect_language_choice(buf):
+        return True
+    if cleaned in _SHORT_BUILDING_PREFIXES:
         return True
     return any(word.startswith(cleaned) for word in _SHORT_REPLY_BUILDING)
 
@@ -77,6 +146,15 @@ class OutboundGeminiLiveLLMService(GeminiLiveLLMService):
         """Apply short-word listening on a standard inbound LLM instance."""
         llm._outbound_last_push_mono = 0.0
         llm._outbound_last_push_text = ""
+        cfg = get_settings()
+        llm._outbound_transcription_min_interval = (
+            cfg.gemini_outbound_transcription_debounce_sec
+        )
+        llm._outbound_flush_ultra_short_sec = (
+            cfg.gemini_outbound_transcription_flush_ultra_short_sec
+        )
+        llm._outbound_flush_short_sec = cfg.gemini_outbound_transcription_flush_short_sec
+        llm._outbound_flush_long_sec = cfg.gemini_outbound_transcription_flush_long_sec
         llm._transcription_timeout_handler = cls._transcription_timeout_handler.__get__(
             llm, GeminiLiveLLMService
         )
@@ -101,7 +179,6 @@ class OutboundGeminiLiveLLMService(GeminiLiveLLMService):
         llm._outbound_telephony = True
         llm._connect = cls._connect_outbound_no_resumption.__get__(llm, GeminiLiveLLMService)
         llm.process_frame = cls._process_frame_outbound.__get__(llm, GeminiLiveLLMService)
-
 
     async def _connect_outbound_no_resumption(
         self, session_resumption_handle: str | None = None
@@ -132,11 +209,12 @@ class OutboundGeminiLiveLLMService(GeminiLiveLLMService):
         now = time.monotonic()
         last_ts = getattr(self, "_outbound_last_push_mono", 0.0)
         last_text = getattr(self, "_outbound_last_push_text", "")
-        if now - last_ts < 0.15:
-            if (
-                _buffer_is_complete_short_reply(cleaned)
-                or detect_language_choice(cleaned)
-            ) and cleaned.lower() != last_text.lower():
+        min_iv = float(
+            getattr(self, "_outbound_transcription_min_interval", 0.03)
+        )
+        is_short = _buffer_is_instant_short(cleaned) or detect_language_choice(cleaned)
+        if now - last_ts < min_iv:
+            if is_short and cleaned.lower() != last_text.lower():
                 pass
             else:
                 logger.debug("[Transcription:user:debounced] [%s]", cleaned)
@@ -148,12 +226,33 @@ class OutboundGeminiLiveLLMService(GeminiLiveLLMService):
     async def _transcription_timeout_handler(self) -> None:
         try:
             buf = self._user_transcription_buffer.strip()
-            if _buffer_is_complete_short_reply(buf):
-                delay = _SHORT_REPLY_TRANSCRIPTION_TIMEOUT_SEC
+            ultra_d = float(
+                getattr(
+                    self,
+                    "_outbound_flush_ultra_short_sec",
+                    _ULTRA_SHORT_TRANSCRIPTION_TIMEOUT_SEC_FALLBACK,
+                )
+            )
+            short_d = float(
+                getattr(
+                    self,
+                    "_outbound_flush_short_sec",
+                    _SHORT_REPLY_TRANSCRIPTION_TIMEOUT_SEC_FALLBACK,
+                )
+            )
+            long_d = float(
+                getattr(
+                    self,
+                    "_outbound_flush_long_sec",
+                    _INBOUND_TRANSCRIPTION_TIMEOUT_SEC_FALLBACK,
+                )
+            )
+            if _buffer_is_instant_short(buf) or _buffer_is_complete_short_reply(buf):
+                delay = ultra_d
             elif _buffer_is_building_short_reply(buf):
-                delay = _SHORT_REPLY_TRANSCRIPTION_TIMEOUT_SEC
+                delay = short_d
             else:
-                delay = _INBOUND_TRANSCRIPTION_TIMEOUT_SEC
+                delay = long_d
             await asyncio.sleep(delay)
             if self._user_transcription_buffer:
                 pending = self._user_transcription_buffer.strip()
@@ -171,7 +270,10 @@ class OutboundGeminiLiveLLMService(GeminiLiveLLMService):
         buf = self._user_transcription_buffer.strip()
         if not buf:
             return False
-        if not _buffer_is_complete_short_reply(buf):
+        if not (
+            _buffer_is_instant_short(buf)
+            or _buffer_is_complete_short_reply(buf)
+        ):
             return False
         if self._transcription_timeout_task:
             await self.cancel_task(self._transcription_timeout_task)

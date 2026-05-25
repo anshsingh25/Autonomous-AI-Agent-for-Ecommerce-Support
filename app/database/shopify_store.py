@@ -19,6 +19,7 @@ from app.services.shipping_snapshot_cache import (
 )
 from app.utils.address import (
     format_delivery_address,
+    normalize_india_pin,
     shipping_address_is_complete,
 )
 from app.utils.config import Settings
@@ -222,6 +223,25 @@ class ShopifyRepository:
         name = (order.get("name") or "").lstrip("#").strip()
         order_number = str(order.get("order_number", "")).strip()
         return name == target_digits or order_number == target_digits
+
+    @staticmethod
+    def _shipping_name_fields(
+        name: str,
+        existing: dict[str, Any],
+    ) -> tuple[str, str, str]:
+        """Shopify REST requires shipping_address.last_name — never send empty."""
+        full = (name or existing.get("name") or "").strip()
+        if not full:
+            first = str(existing.get("first_name") or "Customer").strip() or "Customer"
+            last = str(existing.get("last_name") or first).strip() or "Customer"
+            return first, last, f"{first} {last}".strip()
+
+        parts = full.split()
+        first = parts[0]
+        last = parts[-1] if len(parts) > 1 else first
+        if not last.strip():
+            last = first
+        return first, last, full
 
     async def _find_raw_order(self, order_id: str) -> dict[str, Any] | None:
         cache_key = order_id.strip().upper()
@@ -955,16 +975,16 @@ class ShopifyRepository:
         shopify_id = int(raw["id"])
         display_id = str(raw.get("name", order_id)).lstrip("#").upper()
         existing = dict(raw.get("shipping_address") or {})
+        first_name, last_name, full_name = self._shipping_name_fields(name, existing)
         shipping = {
-            "first_name": existing.get("first_name") or (name.split()[0] if name else "Customer"),
-            "last_name": existing.get("last_name")
-            or (name.split()[-1] if name and len(name.split()) > 1 else ""),
-            "name": name or existing.get("name") or "",
+            "first_name": first_name,
+            "last_name": last_name,
+            "name": full_name,
             "address1": address1.strip(),
             "address2": (address2 or "").strip(),
             "city": city.strip(),
             "province": (province or existing.get("province") or "").strip(),
-            "zip": zip_code.strip(),
+            "zip": normalize_india_pin(zip_code),
             "country": country or existing.get("country") or "India",
             "phone": phone.strip() or existing.get("phone") or raw.get("phone") or "",
         }
@@ -990,6 +1010,32 @@ class ShopifyRepository:
             "delivery_address": formatted,
             "message": "Delivery address updated successfully",
         }
+
+    async def append_order_note(self, order_id: str, note_line: str) -> dict[str, Any]:
+        """Append one line to the Shopify Admin order ``note`` (customer note area)."""
+        line = (note_line or "").strip()
+        if not line:
+            return {"success": False, "message": "Note line is empty"}
+        raw = await self._find_raw_order(order_id)
+        if not raw:
+            return {"success": False, "message": "Order not found"}
+        oid = int(raw["id"])
+        display_id = str(raw.get("name", order_id)).lstrip("#").upper()
+        prev = str(raw.get("note") or "").strip()
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%MZ")
+        merged = (prev + f"\n[{stamp}] " + line).strip()
+        merged = merged[-4900:] if len(merged) > 4900 else merged
+
+        payload = {"order": {"id": oid, "note": merged}}
+        result = await self._request("PUT", f"/orders/{oid}.json", json=payload)
+        if result is None:
+            return {"success": False, "message": "Could not append order note in Shopify"}
+
+        err = result.get("errors")
+        if err:
+            return {"success": False, "message": str(err)}
+        logger.info("Shopify order note appended order=%s", display_id)
+        return {"success": True, "order_id": display_id}
 
     async def update_line_item_quantity(
         self,

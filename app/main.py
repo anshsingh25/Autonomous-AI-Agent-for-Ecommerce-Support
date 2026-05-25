@@ -11,7 +11,7 @@ ensure_nltk_data()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import browser, inbound, orders, outbound, shopify_webhooks, voice
+from app.routes import browser, inbound, order_desk_sync, orders, outbound, shopify_webhooks, voice
 from app.utils.config import get_settings
 from app.utils.logging import setup_logging
 
@@ -82,6 +82,7 @@ def create_app() -> FastAPI:
     app.include_router(outbound.router)
     app.include_router(inbound.router)
     app.include_router(shopify_webhooks.router)
+    app.include_router(order_desk_sync.router)
     app.include_router(orders.router)
 
     @app.get("/")
@@ -107,15 +108,44 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health():
+        from app.services.order_desk_store import get_order_desk_store
+
+        desk = get_order_desk_store()
+        provider = (settings.telephony_provider or "").lower().strip()
+        tel_env_ok = None
+        if provider == "exotel":
+            tel_env_ok = bool(
+                settings.exotel_account_sid.strip()
+                and settings.exotel_api_key.strip()
+                and settings.exotel_api_token.strip()
+                and settings.exotel_caller_id.strip()
+                and (
+                    settings.exotel_outbound_app_id.strip()
+                    or settings.exotel_outbound_flow_url.strip()
+                )
+            )
+        elif provider == "twilio":
+            tel_env_ok = bool(
+                settings.twilio_account_sid.strip()
+                and settings.twilio_auth_token.strip()
+                and settings.twilio_phone_number.strip()
+            )
+        elif provider == "mock":
+            tel_env_ok = True
+
         return {
             "status": "healthy",
             "data_source": settings.data_source,
+            "order_desk_enabled": settings.order_desk_enabled,
+            "order_desk_active": desk.enabled(),
+            "order_desk_path": str(desk.path()),
             "shopify_configured": bool(
                 settings.shopify_shop_domain and settings.shopify_access_token
             ),
             "store_api_configured": bool(settings.store_api_base_url),
-            "telephony_provider": settings.telephony_provider,
+            "telephony_provider": provider,
             "telephony_configured": bool(settings.public_ws_url),
+            "telephony_env_ready": tel_env_ok,
             "auto_confirmation_enabled": settings.auto_confirmation_enabled,
         }
 

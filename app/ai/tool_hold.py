@@ -10,6 +10,8 @@ from pipecat.frames.frames import LLMMessagesAppendFrame, LLMRunFrame
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.llm_service import FunctionCallParams
 
+from app.utils.config import get_settings
+
 logger = logging.getLogger(__name__)
 
 # Spoken once per tool call before the backend request runs.
@@ -73,12 +75,13 @@ def hold_line_for_tool(function_name: str, arguments: Mapping[str, Any] | None =
 async def speak_tool_hold(
     params: FunctionCallParams,
     *,
-    pause_before_work_sec: float = 0.9,
+    pause_before_work_sec: float | None = None,
 ) -> None:
     """
     Ask Gemini to say a short hold line before a tool/API call finishes.
 
-    A brief pause lets audio start so the customer is not left in silence.
+    A brief pause lets the first syllable of audio go out before we await the HTTP call.
+    Long fixed sleeps (~0.9s) sounded like unnatural gaps on outbound calls — see ``TOOL_HOLD_PAUSE_SEC``.
     """
     line = hold_line_for_tool(params.function_name, params.arguments)
     llm = params.llm
@@ -100,7 +103,12 @@ async def speak_tool_hold(
             FrameDirection.DOWNSTREAM,
         )
         await llm.queue_frame(LLMRunFrame(), FrameDirection.DOWNSTREAM)
-        if pause_before_work_sec > 0:
-            await asyncio.sleep(pause_before_work_sec)
+        pause = (
+            pause_before_work_sec
+            if pause_before_work_sec is not None
+            else get_settings().tool_hold_pause_sec
+        )
+        if pause > 0:
+            await asyncio.sleep(pause)
     except Exception:
         logger.exception("Failed to queue tool hold message for %s", params.function_name)

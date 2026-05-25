@@ -23,8 +23,10 @@ from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService, GeminiVADParams
 
 from app.ai.gemini_outbound_llm import OutboundGeminiLiveLLMService
+from app.ai.outbound_call_state import inject_llm_reminder
 from app.ai.outbound_hangup_processor import OutboundHangupOnCloseProcessor
 from app.ai.outbound_interruption_filter import OutboundInterruptionFilter
+from app.ai.outbound_mid_call_processor import OutboundMidCallProcessor
 from app.ai.outbound_short_reply_processor import OutboundShortReplyProcessor
 from app.ai.outbound_user_mute_strategy import OutboundAgentTurnMuteStrategy
 from pipecat.transports.base_transport import BaseTransport
@@ -69,9 +71,9 @@ def create_gemini_llm(
         tools = build_tools_schema()
     else:
         tools = None
-    max_tokens = (
-        min(settings.gemini_max_tokens, 600) if outbound_mode else settings.gemini_max_tokens
-    )
+    # Don't cap outbound below config: long bilingual order recaps + full addresses hit 600
+    # and truncate mid-speech — use GEMINI_MAX_TOKENS / temperature for pacing instead.
+    max_tokens = settings.gemini_max_tokens
     gemini_settings = GeminiLiveLLMService.Settings(
         model=settings.gemini_model,
         voice=settings.gemini_voice,
@@ -81,11 +83,11 @@ def create_gemini_llm(
     if use_pipecat_vad:
         gemini_settings.vad = GeminiVADParams(disabled=True)
     elif outbound_mode:
-        # Browser outbound: fast turn-end so "hindi" / "english" get a quick reply.
+        # Snappier defaults for order-confirmation; tune with GEMINI_OUTBOUND_VAD_* in .env if needed.
         gemini_settings.vad = GeminiVADParams(
             disabled=False,
-            prefix_padding_ms=100,
-            silence_duration_ms=350,
+            prefix_padding_ms=settings.gemini_outbound_vad_prefix_padding_ms,
+            silence_duration_ms=settings.gemini_outbound_vad_silence_duration_ms,
         )
     else:
         gemini_settings.vad = GeminiVADParams(
@@ -103,7 +105,8 @@ def create_gemini_llm(
     )
     if outbound_mode or use_pipecat_vad:
         OutboundGeminiLiveLLMService.patch_short_reply_listening(llm)
-    if use_pipecat_vad:
+        # Stable Exotel/Media Stream + ignore pipeline InterruptionFrame (also needed when
+        # outbound uses Gemini VAD, not only Pipecat Silero legs).
         OutboundGeminiLiveLLMService.patch_outbound_telephony_stability(llm)
     if outbound_session_id:
         register_outbound_confirmation_tools(llm, outbound_session_id)
@@ -123,13 +126,13 @@ async def run_pipeline(
     greet_on_start: bool = False,
     allow_interruptions: bool = True,
     outbound_context: OutboundCallContext | None = None,
+    pstn_wire: bool = False,
 ) -> None:
     """Run Gemini Live voice pipeline on any Pipecat transport."""
     out_rate = audio_out_sample_rate or audio_in_sample_rate
     is_outbound = outbound_context is not None
-    is_telephony = use_pipecat_vad
-    is_telephony_outbound = is_outbound and is_telephony
-    is_telephony_inbound = is_telephony and not is_outbound
+    # Pipecat Silero turns + disabled Gemini VAD — used on PSTN *inbound* and legacy PSTN outbound.
+    is_pipecat_vad_mode = use_pipecat_vad
     outbound_instruction = OUTBOUND_SYSTEM_INSTRUCTION if is_outbound else None
     llm = create_gemini_llm(
         settings,
@@ -145,7 +148,25 @@ async def run_pipeline(
     llm._opening_sent = False
     context = LLMContext()
     user_params = None
-    if is_telephony:
+    if is_pipecat_vad_mode:
+        user_params = LLMUserAggregatorParams(
+            user_turn_strategies=UserTurnStrategies(
+                start=[
+                    VADUserTurnStartStrategy(enable_interruptions=False),
+                    TranscriptionUserTurnStartStrategy(
+                        use_interim=True, enable_interruptions=False
+                    ),
+                ],
+            ),
+            user_mute_strategies=[OutboundAgentTurnMuteStrategy()],
+        )
+    elif is_outbound:
+        # Outbound uses Gemini-side VAD (no transport Silero). If user_params is
+        # omitted, Pipecat defaults to transcription/VAD strategies with
+        # enable_interruptions=True, which broadcasts InterruptionFrame on STT
+        # noise/echo and cuts the agent. Match pipecat-vad telephony: suppress
+        # Pipecat interruptions and mute user STT during agent turns (Gemini
+        # still handles realtime barge-in on the Live session).
         user_params = LLMUserAggregatorParams(
             user_turn_strategies=UserTurnStrategies(
                 start=[
@@ -167,21 +188,32 @@ async def run_pipeline(
         processors.append(
             ConfirmationOutcomeProcessor(session_id=outbound_context.session_id)
         )
+        processors.append(
+            OutboundMidCallProcessor(
+                llm,
+                session_id=outbound_context.session_id,
+            )
+        )
     output_chain: list = [llm]
     if is_outbound and outbound_context:
         output_chain.append(
             OutboundShortReplyProcessor(
                 llm,
                 customer_name=outbound_context.customer_name,
+                session_id=outbound_context.session_id,
             )
         )
-    if is_telephony:
+    if is_pipecat_vad_mode:
         output_chain.append(OutboundInterruptionFilter())
 
     task_holder: list[PipelineTask | None] = [None]
-    if is_telephony_outbound:
+    if is_outbound and outbound_context:
         output_chain.append(
-            OutboundHangupOnCloseProcessor(task_holder, hangup_delay_sec=2.5)
+            OutboundHangupOnCloseProcessor(
+                task_holder,
+                session_id=outbound_context.session_id,
+                hangup_delay_sec=1.8,
+            )
         )
 
     output_chain.extend([transport.output(), context_aggregator.assistant()])
@@ -203,11 +235,17 @@ async def run_pipeline(
 
     async def _wait_for_gemini_ready() -> bool:
         """Gemini Live drops audio until LLMContextFrame is handled."""
-        # Telephony can start greeting sooner once session is up; 0.8s felt laggy.
-        await asyncio.sleep(0.2 if is_telephony else 0.25)
+        if is_pipecat_vad_mode:
+            boot_sleep = 0.2
+        elif is_outbound:
+            boot_sleep = 0.12  # Faster opening on outbound Gemini-VAD legs
+        else:
+            boot_sleep = 0.22
+        await asyncio.sleep(boot_sleep)
         poll_interval = 0.1
         max_ticks = 150
-        stable_required = 3
+        # Outbound + Gemini VAD: require fewer stable polls so first greeting starts sooner.
+        stable_required = 2 if is_outbound and not is_pipecat_vad_mode else 3
 
         await task.queue_frame(LLMRunFrame())
 
@@ -285,12 +323,21 @@ async def run_pipeline(
                     llm._ready_for_realtime_input = True
                     logger.info("%s: restored realtime input after reconnect (mid-call)", label)
                 else:
-                    # Mid-call reconnect must never trigger a fresh opening/greeting.
-                    # Mark input as ready and continue with the ongoing conversation.
                     llm._ready_for_realtime_input = True
                     logger.warning(
                         "%s: reconnect had empty context; restored input without initial response",
                         label,
+                    )
+                if outbound_context and getattr(llm, "_opening_sent", False):
+                    addr = (outbound_context.delivery_address or "")[:120]
+                    summary = outbound_context.last_tool_summary or "continue confirmation"
+                    await inject_llm_reminder(
+                        llm,
+                        "[System — not the customer] Audio reconnected mid-call. "
+                        f"Order {outbound_context.order_id}. Continue where you left off. "
+                        f"Last action: {summary}. Delivery: {addr}. "
+                        "Do NOT repeat 'Hi this is Aria' or ask English/Hindi again.",
+                        run=True,
                     )
             except Exception:
                 logger.exception("%s: failed to restore Gemini input", label)

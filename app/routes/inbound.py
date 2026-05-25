@@ -15,6 +15,10 @@ from app.services.outbound_call_service import (
 )
 from app.services.telephony_twiml import exotel_inbound_voicebot_ws_url
 from app.utils.config import Settings, get_settings
+from app.utils.exotel_response import (
+    exotel_twilio_rest_message,
+    http_proxy_status_for_exotel,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/inbound", tags=["inbound"])
@@ -79,11 +83,27 @@ async def place_inbound_test_call(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     if response.status_code >= 400:
-        detail = (response.text or "")[:500]
-        logger.error("Exotel inbound connect failed %s: %s", response.status_code, detail)
+        raw = response.text or ""
+        short = exotel_twilio_rest_message(raw)
+        logger.error(
+            "Exotel inbound connect failed %s: %s",
+            response.status_code,
+            short or raw[:500],
+        )
+        if (
+            response.status_code == 403
+            and short
+            and "outbound" in short.lower()
+            and "kyc" in short.lower()
+        ):
+            logger.info(
+                "Exotel sometimes labels KYC as 'outbound'—it still blocks "
+                "Calls/connect for /api/inbound/test-call until KYC is approved."
+            )
+        payload = short or raw[:500]
         raise HTTPException(
-            status_code=502,
-            detail=f"Exotel connect failed ({response.status_code}): {detail}",
+            status_code=http_proxy_status_for_exotel(response.status_code),
+            detail=f"Exotel connect failed ({response.status_code}): {payload}",
         )
 
     logger.info(

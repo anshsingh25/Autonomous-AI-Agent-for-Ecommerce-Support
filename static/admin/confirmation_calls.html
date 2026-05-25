@@ -163,6 +163,13 @@
         Limit
         <input type="number" id="limitInput" value="30" min="1" max="50" style="width:4rem;margin-left:.35rem" />
       </label>
+      <label style="font-size:.8rem;color:var(--muted);display:flex;align-items:center;gap:.35rem">
+        Tag filter
+        <input type="text" id="tagInput" placeholder="e.g. Call AI Confirm" style="width:160px" />
+      </label>
+      <button type="button" id="tagListBtn" class="secondary">List tagged</button>
+      <button type="button" id="tagDialBtn" class="danger">Dial tagged</button>
+      <button type="button" id="tagDryBtn" class="secondary">Dry run tagged</button>
       <div class="stats">
         <span>Need call: <strong id="statPending">—</strong></span>
         <span>Skipped: <strong id="statSkipped">—</strong></span>
@@ -221,6 +228,10 @@
     const refreshBtn = document.getElementById("refreshBtn");
     const previewBtn = document.getElementById("previewBtn");
     const limitInput = document.getElementById("limitInput");
+    const tagInput = document.getElementById("tagInput");
+    const tagListBtn = document.getElementById("tagListBtn");
+    const tagDialBtn = document.getElementById("tagDialBtn");
+    const tagDryBtn = document.getElementById("tagDryBtn");
 
     let pendingRows = [];
     let calling = false;
@@ -289,6 +300,7 @@
       for (const row of rows) {
         const tr = document.createElement("tr");
         const phoneVal = row.phone || "";
+        const deskPhone = row.phone_source === "order_desk";
         tr.innerHTML = `
           <td><strong>#${escapeHtml(row.order_id)}</strong></td>
           <td>₹${Number(row.total_inr || 0).toFixed(0)}</td>
@@ -296,9 +308,10 @@
           <td>
             <input type="tel" data-phone-for="${escapeHtml(row.order_id)}"
               placeholder="10-digit mobile" value="${escapeHtml(phoneVal)}" />
+            ${deskPhone ? '<div class="muted" style="font-size:.75rem;margin-top:.25rem">From order desk</div>' : ""}
           </td>
           <td>
-            <span class="pill ${row.can_dial ? "ready" : "wait"}">${row.can_dial ? "Ready" : "Need phone"}</span>
+            <span class="pill ${row.can_dial ? "ready" : "wait"}">${row.can_dial ? (deskPhone ? "Ready (desk)" : "Ready") : "Need phone"}</span>
             <button type="button" class="btn call-one" data-order="${escapeHtml(row.order_id)}" style="margin-top:.35rem;width:100%">
               Call customer
             </button>
@@ -449,6 +462,77 @@
     refreshBtn.addEventListener("click", loadList);
     callAllBtn.addEventListener("click", callAllReady);
     previewBtn.addEventListener("click", dryRunBatch);
+
+    function requireTag(label) {
+      const t = (tagInput.value || "").trim();
+      if (!t) {
+        showBanner(`${label}: enter a tag in “Tag filter”.`, "err");
+        return null;
+      }
+      return t;
+    }
+
+    async function listTagged() {
+      const tag = requireTag("List tagged");
+      if (!tag) return;
+      const limit = parseInt(limitInput.value, 10) || 30;
+      tagListBtn.disabled = true;
+      try {
+        const q = new URLSearchParams({ tag, limit: String(limit) });
+        const res = await fetch(`/api/shopify/confirmation/tagged-pending?${q}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || res.statusText);
+        showBanner(
+          `Tag “${tag}”: ${data.count} order(s) — see log for phones / need_phone.`,
+          "info"
+        );
+        log(JSON.stringify(data, null, 2));
+      } catch (e) {
+        showBanner("List tagged failed: " + e.message, "err");
+      } finally {
+        tagListBtn.disabled = false;
+      }
+    }
+
+    async function dialTagged(dryRun) {
+      const tag = requireTag(dryRun ? "Dry run" : "Dial tagged");
+      if (!tag) return;
+      const limit = parseInt(limitInput.value, 10) || 30;
+      const btn = dryRun ? tagDryBtn : tagDialBtn;
+      btn.disabled = true;
+      try {
+        const res = await fetch("/api/shopify/confirmation/dial-tagged", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tag, limit, dry_run: dryRun, delay_sec: 2.5 }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        const n = data.dialed_attempts ?? 0;
+        showBanner(
+          dryRun
+            ? `Dry run “${tag}”: ${data.candidates} candidate(s) — check log.`
+            : `Dial “${tag}”: ${n} dialing, see log for need_phone/errors.`,
+          dryRun ? "info" : "ok"
+        );
+        log(JSON.stringify(data, null, 2));
+        if (!dryRun) await loadList();
+      } catch (e) {
+        showBanner((dryRun ? "Dry run" : "Dial") + " tagged failed: " + e.message, "err");
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    tagListBtn.addEventListener("click", listTagged);
+    tagDialBtn.addEventListener("click", () => {
+      const tag = (tagInput.value || "").trim();
+      if (!tag) return listTagged();
+      if (!confirm(`Dial all orders with tag “${tag}” that have a phone?`)) return;
+      dialTagged(false);
+    });
+    tagDryBtn.addEventListener("click", () => dialTagged(true));
+
     loadList();
   </script>
 </body>

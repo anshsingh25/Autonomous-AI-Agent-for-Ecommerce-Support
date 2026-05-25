@@ -5,6 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 
+def normalize_india_pin(zip_code: str | None) -> str:
+    """Strip quotes/spaces from PIN; Shopify rejects values like '394111."""
+    raw = str(zip_code or "").strip().strip("'\"")
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    return digits or raw
+
+
 def format_delivery_address(addr: dict[str, Any] | None) -> str | None:
     """Build a single spoken line from Shopify-style address fields."""
     if not addr:

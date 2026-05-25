@@ -9,6 +9,7 @@ import json
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
 from app.services.order_confirmation_service import (
     OrderConfirmationService,
@@ -140,6 +141,52 @@ async def scan_unfulfilled_orders(
         return await order_confirmation_service.scan_and_call_unfulfilled(
             limit=limit,
             dry_run=dry_run,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class DialTaggedBody(BaseModel):
+    """Batch dial confirmation for orders carrying a Shopify / order-desk tag."""
+
+    tag: str = Field(..., min_length=1, description='e.g. "AI Call Queue" (case-insensitive)')
+    limit: int = Field(default=20, ge=1, le=50)
+    dry_run: bool = Field(default=False)
+    delay_sec: float = Field(default=2.5, ge=0, le=120)
+
+
+@router.get("/confirmation/tagged-pending")
+async def list_tagged_pending_orders(
+    tag: str = Query(..., min_length=1),
+    limit: int = Query(default=50, ge=1, le=250),
+) -> dict:
+    """
+    List unconfirmed unfulfilled orders that include ``tag`` on Shopify tags
+    or order desk tags, plus resolved phone (desk fills missing Shopify PII).
+    """
+    try:
+        return await order_confirmation_service.list_tagged_confirmation_candidates(
+            tag.strip(),
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/confirmation/dial-tagged")
+async def dial_tagged_confirmation_orders(body: DialTaggedBody) -> dict:
+    """
+    Automatically place confirmation calls for every matching tagged order that has a phone.
+
+    Phones come from Shopify or order desk (`ORDER_DESK_ENABLED`). Schedule via cron after
+    staff or Shopify Flow applies the tag (e.g. dial only orders tagged ``Call AI Confirm``).
+    """
+    try:
+        return await order_confirmation_service.dial_orders_with_matching_tag(
+            body.tag.strip(),
+            limit=body.limit,
+            dry_run=body.dry_run,
+            delay_sec=body.delay_sec,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
