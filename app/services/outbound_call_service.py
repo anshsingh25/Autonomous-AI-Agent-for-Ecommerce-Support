@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 import httpx
 
 from app.database.factory import create_order_repository
+from app.database.magento_store import MagentoRepository
 from app.database.shopify_store import ShopifyRepository
 from app.models.call_context import OutboundCallContext
 from app.services.call_context_store import save_context
@@ -172,12 +173,15 @@ class OutboundCallService:
                     )
 
         settings = get_settings()
-        if not line_items and settings.data_source.lower() == "shopify":
+        ds = settings.data_source.lower()
+        if not line_items and ds in ("shopify", "magento"):
             repo = create_order_repository(settings)
-            if isinstance(repo, ShopifyRepository):
+            if isinstance(repo, (ShopifyRepository, MagentoRepository)):
                 raw = await repo.get_raw_order(str(result["order_id"]))
                 if raw:
-                    shopify_order_id = int(raw["id"])
+                    entity = raw.get("id") or raw.get("entity_id")
+                    if entity:
+                        shopify_order_id = int(entity)
                     line_items = repo.line_items_from_raw(raw)
 
         delivery_address = result.get("delivery_address")
@@ -199,6 +203,7 @@ class OutboundCallService:
             status=str(result.get("status") or "processing"),
             delivery_address=delivery_address,
             shopify_order_id=shopify_order_id,
+            language="en" if self._settings.data_source.lower() == "magento" else None,
         )
         save_context(ctx)
         return ctx

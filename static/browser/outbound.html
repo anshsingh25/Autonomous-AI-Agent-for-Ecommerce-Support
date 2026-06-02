@@ -227,8 +227,28 @@
     let stopping = false;
     let finalizedSessionId = null;
     let audioChunks = 0;
+    let ukEnglishOnly = false;
+
+    async function loadVoiceConfig() {
+      try {
+        const h = await fetch("/health").then((r) => r.json());
+        ukEnglishOnly = h.data_source === "magento";
+        if (ukEnglishOnly) {
+          langRow.hidden = true;
+          langRow.style.display = "none";
+        }
+      } catch (_) {}
+    }
+
+    function afterOpeningCustomerTurn() {
+      if (ukEnglishOnly) {
+        return { log: "Opening done — say yes or that you have a minute", status: "Your turn — speak now" };
+      }
+      return { log: "Opening done — speak now or tap Hindi / English", status: "Your turn — speak or tap language" };
+    }
 
     function sendLanguage(lang) {
+      if (ukEnglishOnly) return;
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       ws.send(JSON.stringify({ type: "language", lang }));
       log("Language tap: " + lang);
@@ -237,6 +257,7 @@
 
     btnHindi.addEventListener("click", () => sendLanguage("hi"));
     btnEnglish.addEventListener("click", () => sendLanguage("en"));
+    loadVoiceConfig();
 
     function log(msg) {
       console.log(msg);
@@ -297,10 +318,11 @@
             awaitingGreetingEnd = false;
             micActive = true;
             if (micEnableFallbackTimer) clearTimeout(micEnableFallbackTimer);
-            log("Opening done — speak now or tap Hindi / English");
-            langRow.hidden = false;
+            const turn = afterOpeningCustomerTurn();
+            log(turn.log);
+            if (!ukEnglishOnly) langRow.hidden = false;
           }
-          setStatus("Your turn — speak or tap language", "live");
+          setStatus(afterOpeningCustomerTurn().status, "live");
         }
       }, Math.max(50, endAt * 1000));
     }
@@ -433,9 +455,10 @@
           if (!micActive) {
             micActive = true;
             awaitingGreetingEnd = false;
-            log("Mic on — speak now or tap Hindi / English");
-            langRow.hidden = false;
-            setStatus("Connected — speak or tap language", "live");
+            const turn = afterOpeningCustomerTurn();
+            log("Mic on — " + turn.log.replace("Opening done — ", ""));
+            if (!ukEnglishOnly) langRow.hidden = false;
+            setStatus("Connected — " + turn.status.toLowerCase(), "live");
           }
         }, 9000);
 

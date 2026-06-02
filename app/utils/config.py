@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "Ecommerce AI Call Assistant"
+    store_brand_name: str = Field(
+        default="badlavo",
+        validation_alias="STORE_BRAND_NAME",
+        description="Spoken brand in greetings (inbound + outbound). Default badlavo for Shopify site.",
+    )
     debug: bool = False
     host: str = "0.0.0.0"
     port: int = 7860
@@ -57,13 +62,23 @@ class Settings(BaseSettings):
         description="Outbound: ms before speech counts as started.",
     )
     gemini_outbound_vad_silence_duration_ms: int = Field(
-        default=145,
+        default=110,
         validation_alias="GEMINI_OUTBOUND_VAD_SILENCE_DURATION_MS",
         ge=90,
         le=900,
         description=(
             "Outbound: silence after last word before your turn ends (ms). Lower = faster reply when done; "
-            "try 115–165 on sluggish phone paths. Raise if bot talks during your pauses."
+            "try 100–130 on phone. Raise if bot replies while customer is still thinking."
+        ),
+    )
+    gemini_outbound_user_turn_stop_timeout_sec: float = Field(
+        default=0.1,
+        validation_alias="GEMINI_OUTBOUND_USER_TURN_STOP_TIMEOUT_SEC",
+        ge=0.05,
+        le=0.6,
+        description=(
+            "Outbound: after Gemini VAD detects silence, wait this long for late STT "
+            "before Aria replies. Lower = snappier; raise if replies cut off mid-sentence."
         ),
     )
     gemini_outbound_transcription_debounce_sec: float = Field(
@@ -91,9 +106,9 @@ class Settings(BaseSettings):
         ),
     )
     gemini_outbound_transcription_flush_long_sec: float = Field(
-        default=0.052,
+        default=0.038,
         validation_alias="GEMINI_OUTBOUND_TRANSCRIPTION_FLUSH_LONG_SEC",
-        ge=0.035,
+        ge=0.025,
         le=0.6,
         description="Outbound: STT flush when Gemini streams without sentence boundary — lower = quicker.",
     )
@@ -105,6 +120,14 @@ class Settings(BaseSettings):
         description=(
             "Seconds after spoken 'hold' line before tool/API runs. "
             "Previously ~0.9s blocked every tool call (heavy dead air on phone)."
+        ),
+    )
+    tool_hold_speak_inbound: bool = Field(
+        default=False,
+        validation_alias="TOOL_HOLD_SPEAK_INBOUND",
+        description=(
+            "If true, inject an extra spoken hold line before each inbound tool (often duplicates "
+            "what the model already said and sounds mid-call). Leave false; model says hold once per turn."
         ),
     )
 
@@ -154,7 +177,7 @@ class Settings(BaseSettings):
         description="ExoML start URL for inbound; built from EXOTEL_INBOUND_APP_ID if empty.",
     )
 
-    # Order data: mock | shopify | api
+    # Order data: mock | shopify | magento | api
     data_source: str = Field(default="mock", validation_alias="DATA_SOURCE")
 
     order_desk_enabled: bool = Field(
@@ -182,6 +205,43 @@ class Settings(BaseSettings):
         default="",
         validation_alias="SHOPIFY_WEBHOOK_SECRET",
         description="HMAC secret from Shopify webhook (optional in dev)",
+    )
+
+    # Magento 2.4 (separate site — set DATA_SOURCE=magento only on that deployment)
+    magento_base_url: str = Field(
+        default="",
+        validation_alias="MAGENTO_BASE_URL",
+        description="Store base URL, e.g. https://your-store.com (no /rest suffix)",
+    )
+    magento_access_token: str = Field(
+        default="",
+        validation_alias="MAGENTO_ACCESS_TOKEN",
+        description="Integration access token (Admin → System → Integrations)",
+    )
+    magento_store_code: str = Field(
+        default="default",
+        validation_alias="MAGENTO_STORE_CODE",
+        description=(
+            "Single REST store view code: /rest/{code}/V1. Use 'all' for admin scope, "
+            "or set MAGENTO_STORE_CODES for multiple store views."
+        ),
+    )
+    magento_store_codes: str = Field(
+        default="",
+        validation_alias="MAGENTO_STORE_CODES",
+        description=(
+            "Comma-separated store view codes (from Stores → All Stores → Store View). "
+            "When set, searches each view for orders. Example: "
+            "thamesmead,charlton,ades,manchester,main_wholesale_store_view"
+        ),
+    )
+    magento_webhook_secret: str = Field(
+        default="",
+        validation_alias="MAGENTO_WEBHOOK_SECRET",
+        description=(
+            "Shared secret for POST /api/magento/webhooks/order-created. "
+            "Header: X-Magento-Webhook-Secret"
+        ),
     )
     auto_confirmation_enabled: bool = Field(
         default=True,

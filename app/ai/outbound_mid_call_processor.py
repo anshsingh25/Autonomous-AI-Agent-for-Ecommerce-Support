@@ -71,21 +71,30 @@ class OutboundMidCallProcessor(FrameProcessor):
             logger.info("Outbound mid-call guard handled: %r", cleaned[:80])
             return
 
-        if ctx.opening_complete and len(ctx.user_transcripts) >= 5:
+        if ctx.opening_complete and len(ctx.user_transcripts) >= 4:
             from app.services.confirmation_intent import (
                 customer_final_order_confirm,
                 detect_confirmation_intent,
             )
             from app.models.call_outcome import CallOutcome
 
-            if customer_final_order_confirm(cleaned):
-                ctx.final_confirm_received = True
-                save_context(ctx)
-                logger.info("Outbound: final order confirm detected — hangup after closing")
-            elif detect_confirmation_intent(cleaned) == CallOutcome.CANCELLED:
-                ctx.final_confirm_received = True
-                save_context(ctx)
-                logger.info("Outbound: cancel intent detected — hangup after closing")
+            intent = detect_confirmation_intent(cleaned)
+            if customer_final_order_confirm(cleaned) or (
+                intent == CallOutcome.CONFIRMED and len(ctx.user_transcripts) >= 5
+            ):
+                if not ctx.final_confirm_received:
+                    ctx.final_confirm_received = True
+                    ctx.agent_turns_after_final_confirm = 0
+                    save_context(ctx)
+                    logger.info(
+                        "Outbound: final order confirm detected — hangup after closing"
+                    )
+            elif intent == CallOutcome.CANCELLED:
+                if not ctx.final_confirm_received:
+                    ctx.final_confirm_received = True
+                    ctx.agent_turns_after_final_confirm = 0
+                    save_context(ctx)
+                    logger.info("Outbound: cancel intent detected — hangup after closing")
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)

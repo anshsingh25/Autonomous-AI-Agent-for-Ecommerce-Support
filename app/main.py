@@ -11,7 +11,17 @@ ensure_nltk_data()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import browser, inbound, order_desk_sync, orders, outbound, shopify_webhooks, voice
+from app.routes import (
+    browser,
+    inbound,
+    magento_webhooks,
+    confirmation_desk,
+    order_desk_sync,
+    orders,
+    outbound,
+    shopify_webhooks,
+    voice,
+)
 from app.utils.config import get_settings
 from app.utils.logging import setup_logging
 
@@ -36,6 +46,18 @@ async def lifespan(app: FastAPI):
                 logger.error("Shopify setup: %s", msg)
         except Exception as exc:
             logger.error("Shopify connection check failed: %s", exc)
+    elif settings.data_source.lower() == "magento":
+        logger.info("Magento base: %s", settings.magento_base_url)
+        try:
+            from app.database.magento_store import MagentoRepository
+
+            ok, msg = await MagentoRepository(settings).verify_connection()
+            if ok:
+                logger.info(msg)
+            else:
+                logger.error("Magento setup: %s", msg)
+        except Exception as exc:
+            logger.error("Magento connection check failed: %s", exc)
     elif settings.data_source.lower() == "api":
         logger.info("Store API: %s", settings.store_api_base_url)
     if not settings.public_ws_url:
@@ -82,6 +104,8 @@ def create_app() -> FastAPI:
     app.include_router(outbound.router)
     app.include_router(inbound.router)
     app.include_router(shopify_webhooks.router)
+    app.include_router(magento_webhooks.router)
+    app.include_router(confirmation_desk.router)
     app.include_router(order_desk_sync.router)
     app.include_router(orders.router)
 
@@ -141,6 +165,9 @@ def create_app() -> FastAPI:
             "order_desk_path": str(desk.path()),
             "shopify_configured": bool(
                 settings.shopify_shop_domain and settings.shopify_access_token
+            ),
+            "magento_configured": bool(
+                settings.magento_base_url and settings.magento_access_token
             ),
             "store_api_configured": bool(settings.store_api_base_url),
             "telephony_provider": provider,

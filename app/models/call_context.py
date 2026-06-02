@@ -41,6 +41,8 @@ class OutboundCallContext:
     outcome_applied: bool = False
     final_confirm_received: bool = False
     shopify_cancel_via_tool: bool = False
+    agent_turns_after_final_confirm: int = 0
+    recent_agent_speech: str = ""
     language: str | None = None
     opening_complete: bool = False
     last_tool_name: str | None = None

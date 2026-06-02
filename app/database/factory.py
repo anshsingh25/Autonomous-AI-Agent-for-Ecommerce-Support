@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from app.database.http_store import HttpStoreRepository
+from app.database.magento_store import MagentoRepository
 from app.database.mock_db import MockDatabase
 from app.database.protocol import OrderRepository
 from app.database.shopify_store import ShopifyRepository
@@ -23,6 +24,16 @@ def create_order_repository(settings: Settings) -> OrderRepository:
             )
         repo = ShopifyRepository(settings)
         logger.info("Order data: Shopify store %s", settings.shopify_shop_domain)
+        return repo
+
+    if source == "magento":
+        if not settings.magento_base_url.strip():
+            raise ValueError(
+                "DATA_SOURCE=magento requires MAGENTO_BASE_URL "
+                "(e.g. https://your-magento-store.com)"
+            )
+        repo = MagentoRepository(settings)
+        logger.info("Order data: Magento at %s", settings.magento_base_url)
         return repo
 
     if source == "api":

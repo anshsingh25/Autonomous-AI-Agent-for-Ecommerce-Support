@@ -7,6 +7,7 @@ from typing import Any
 
 from app.database.factory import create_order_repository
 from app.database.http_store import HttpStoreRepository
+from app.database.magento_store import MagentoRepository
 from app.database.shopify_store import ShopifyRepository
 from app.database.protocol import OrderRepository
 from app.database.mock_db import Order
@@ -14,6 +15,13 @@ from app.services.order_desk_store import (
     full_delivery_address,
     get_order_desk_store,
     order_desk_primary,
+)
+from app.services.order_edits import (
+    apply_address_update_for_order,
+    apply_quantity_update_for_order,
+    apply_variant_swap_for_order,
+    enrich_edit_result,
+    list_variants_for_order,
 )
 from app.utils.config import get_settings
 
@@ -102,10 +110,14 @@ class OrderService:
         payload.update(_delivery_address_fields(order, desk_rec=desk_rec))
         if desk_rec:
             payload["data_source"] = "order_desk"
+        elif isinstance(self._db, MagentoRepository):
+            payload["data_source"] = "magento"
+        elif isinstance(self._db, ShopifyRepository):
+            payload["data_source"] = "shopify"
         return payload
 
     async def refund_status(self, order_id: str) -> dict[str, Any]:
-        if isinstance(self._db, ShopifyRepository):
+        if isinstance(self._db, (ShopifyRepository, MagentoRepository)):
             return await self._db.get_refund_status(order_id)
         if isinstance(self._db, HttpStoreRepository):
             raw = await self._db.fetch_refund(order_id)
@@ -140,7 +152,9 @@ class OrderService:
                     "reason": reason or "Customer request via phone support",
                 }
 
-        if isinstance(self._db, (ShopifyRepository, HttpStoreRepository)):
+        if isinstance(
+            self._db, (ShopifyRepository, MagentoRepository, HttpStoreRepository)
+        ):
             raw = await self._db.cancel_order_api(order_id, reason=reason)
             if raw is not None:
                 return _normalize_cancel_response(order_id, raw)
@@ -170,7 +184,7 @@ class OrderService:
         }
 
     async def track_order(self, order_id: str) -> dict[str, Any]:
-        if isinstance(self._db, ShopifyRepository):
+        if isinstance(self._db, (ShopifyRepository, MagentoRepository)):
             return await self._db.get_tracking(order_id)
         if isinstance(self._db, HttpStoreRepository):
             raw = await self._db.fetch_tracking(order_id)
@@ -201,6 +215,77 @@ class OrderService:
         }
         payload.update(_delivery_address_fields(order))
         return payload
+
+    async def update_delivery_address(
+        self,
+        order_id: str,
+        *,
+        address1: str,
+        city: str,
+        zip_code: str,
+        province: str = "",
+        address2: str = "",
+        name: str = "",
+        phone: str = "",
+    ) -> dict[str, Any]:
+        result = await apply_address_update_for_order(
+            order_id,
+            address1=address1,
+            city=city,
+            zip_code=zip_code,
+            province=province,
+            address2=address2,
+            name=name,
+            phone=phone,
+        )
+        return await enrich_edit_result(order_id, result)
+
+    async def update_line_item_quantity(
+        self,
+        order_id: str,
+        *,
+        quantity: int,
+        product_name: str = "",
+        line_index: int = 0,
+    ) -> dict[str, Any]:
+        result = await apply_quantity_update_for_order(
+            order_id,
+            quantity=quantity,
+            product_name=product_name,
+            line_index=line_index,
+        )
+        return await enrich_edit_result(order_id, result)
+
+    async def swap_line_item_variant(
+        self,
+        order_id: str,
+        *,
+        new_variant: str,
+        product_name: str = "",
+        line_index: int = 0,
+        quantity: int | None = None,
+    ) -> dict[str, Any]:
+        result = await apply_variant_swap_for_order(
+            order_id,
+            new_variant=new_variant,
+            product_name=product_name,
+            line_index=line_index,
+            quantity=quantity,
+        )
+        return await enrich_edit_result(order_id, result)
+
+    async def list_item_variants(
+        self,
+        order_id: str,
+        *,
+        product_name: str = "",
+        line_index: int = 0,
+    ) -> dict[str, Any]:
+        return await list_variants_for_order(
+            order_id,
+            product_name=product_name,
+            line_index=line_index,
+        )
 
 
 def _normalize_refund_response(order_id: str, raw: dict[str, Any]) -> dict[str, Any]:

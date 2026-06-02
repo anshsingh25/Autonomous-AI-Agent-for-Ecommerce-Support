@@ -8,7 +8,8 @@ import re
 import time
 from typing import Optional
 
-from pipecat.frames.frames import Frame, InterruptionFrame
+from pipecat.frames.frames import Frame, InterruptionFrame, TranscriptionFrame
+from pipecat.utils.time import time_now_iso8601
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.google.gemini_live.llm import (
     GeminiLiveLLMService,
@@ -21,7 +22,7 @@ from app.utils.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-_INBOUND_TRANSCRIPTION_TIMEOUT_SEC_FALLBACK = 0.052
+_INBOUND_TRANSCRIPTION_TIMEOUT_SEC_FALLBACK = 0.038
 _SHORT_REPLY_TRANSCRIPTION_TIMEOUT_SEC_FALLBACK = 0.028
 _ULTRA_SHORT_TRANSCRIPTION_TIMEOUT_SEC_FALLBACK = 0.025
 _LANGUAGE_PHRASE_MAX_LEN = 64
@@ -164,8 +165,11 @@ class OutboundGeminiLiveLLMService(GeminiLiveLLMService):
         llm._handle_msg_input_transcription = cls._handle_msg_input_transcription.__get__(
             llm, GeminiLiveLLMService
         )
-        llm._push_user_transcription = cls._push_user_transcription_debounced.__get__(
+        llm._push_user_transcription = cls._push_user_transcription_finalized.__get__(
             llm, GeminiLiveLLMService
+        )
+        llm._push_user_transcription_debounced = (
+            cls._push_user_transcription_debounced.__get__(llm, GeminiLiveLLMService)
         )
 
     @classmethod
@@ -179,6 +183,22 @@ class OutboundGeminiLiveLLMService(GeminiLiveLLMService):
         llm._outbound_telephony = True
         llm._connect = cls._connect_outbound_no_resumption.__get__(llm, GeminiLiveLLMService)
         llm.process_frame = cls._process_frame_outbound.__get__(llm, GeminiLiveLLMService)
+        llm._push_output_transcription_text_frames = (
+            cls._push_output_transcription_with_context.__get__(llm, GeminiLiveLLMService)
+        )
+
+    async def _push_output_transcription_with_context(self, text: str) -> None:
+        """Mirror agent speech into call context for reliable PSTN hangup detection."""
+        sid = getattr(self, "_outbound_session_id", None)
+        chunk = (text or "").strip()
+        if sid and chunk:
+            from app.services.call_context_store import get_context, save_context
+
+            ctx = get_context(str(sid))
+            if ctx:
+                ctx.recent_agent_speech = (ctx.recent_agent_speech + chunk)[-1200:]
+                save_context(ctx)
+        await GeminiLiveLLMService._push_output_transcription_text_frames(self, text)
 
     async def _connect_outbound_no_resumption(
         self, session_resumption_handle: str | None = None
@@ -198,30 +218,6 @@ class OutboundGeminiLiveLLMService(GeminiLiveLLMService):
             logger.debug("Outbound: ignoring InterruptionFrame in Gemini service")
             return
         await GeminiLiveLLMService.process_frame(self, frame, direction)
-
-    async def _push_user_transcription_debounced(
-        self, text: str, result: Optional[LiveServerMessage] = None
-    ) -> None:
-        """Debounce partial STT fragments; always allow a new complete short reply."""
-        cleaned = (text or "").strip()
-        if not cleaned:
-            return
-        now = time.monotonic()
-        last_ts = getattr(self, "_outbound_last_push_mono", 0.0)
-        last_text = getattr(self, "_outbound_last_push_text", "")
-        min_iv = float(
-            getattr(self, "_outbound_transcription_min_interval", 0.03)
-        )
-        is_short = _buffer_is_instant_short(cleaned) or detect_language_choice(cleaned)
-        if now - last_ts < min_iv:
-            if is_short and cleaned.lower() != last_text.lower():
-                pass
-            else:
-                logger.debug("[Transcription:user:debounced] [%s]", cleaned)
-                return
-        self._outbound_last_push_mono = now
-        self._outbound_last_push_text = cleaned
-        await GeminiLiveLLMService._push_user_transcription(self, cleaned, result)
 
     async def _transcription_timeout_handler(self) -> None:
         try:
@@ -263,6 +259,51 @@ class OutboundGeminiLiveLLMService(GeminiLiveLLMService):
                 await self._push_user_transcription(pending, result=None)
         except asyncio.CancelledError:
             raise
+
+    async def _push_user_transcription_finalized(
+        self, text: str, result: Optional[LiveServerMessage] = None
+    ) -> None:
+        """Push finalized user STT so Pipecat ends the turn without Smart Turn delay."""
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return
+        await self._push_user_transcription_debounced(cleaned, result)
+
+    async def _push_user_transcription_debounced(
+        self, text: str, result: Optional[LiveServerMessage] = None
+    ) -> None:
+        """Debounce partial STT fragments; always allow a new complete short reply."""
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return
+        now = time.monotonic()
+        last_ts = getattr(self, "_outbound_last_push_mono", 0.0)
+        last_text = getattr(self, "_outbound_last_push_text", "")
+        min_iv = float(
+            getattr(self, "_outbound_transcription_min_interval", 0.03)
+        )
+        is_short = _buffer_is_instant_short(cleaned) or detect_language_choice(cleaned)
+        if now - last_ts < min_iv:
+            if is_short and cleaned.lower() != last_text.lower():
+                pass
+            else:
+                logger.debug("[Transcription:user:debounced] [%s]", cleaned)
+                return
+        self._outbound_last_push_mono = now
+        self._outbound_last_push_text = cleaned
+        await GeminiLiveLLMService._handle_user_transcription(
+            self, cleaned, True, self._settings.language
+        )
+        await self.push_frame(
+            TranscriptionFrame(
+                text=cleaned,
+                user_id="",
+                timestamp=time_now_iso8601(),
+                result=result,
+                finalized=True,
+            ),
+            FrameDirection.UPSTREAM,
+        )
 
     async def _flush_short_buffer_if_ready(
         self, message: Optional[LiveServerMessage]

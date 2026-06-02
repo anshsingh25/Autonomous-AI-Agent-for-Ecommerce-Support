@@ -34,5 +34,12 @@ nltk_data/
 # Logs
 *.log
 
+# Local order desk exports (PII — do not commit)
+data/imports/
+data/order_desk.json
+data/magento_order_desk.json
+data/order_desk_config.json
+
 # Misc
 get-pip.py
+environment.yaml.save

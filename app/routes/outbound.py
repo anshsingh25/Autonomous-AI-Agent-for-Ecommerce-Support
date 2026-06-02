@@ -8,10 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.services.order_confirmation_service import (
-    OrderConfirmationService,
-    order_confirmation_service,
-)
+from app.services.confirmation_factory import get_order_confirmation_service
 from app.services.telephony_twiml import exotel_voicebot_hint
 from app.utils.config import Settings, get_settings
 from app.utils.exotel_response import (
@@ -35,18 +32,18 @@ class ConfirmOrderCallBody(BaseModel):
     )
 
 
-def get_confirmation_service() -> OrderConfirmationService:
-    return order_confirmation_service
+def get_confirmation_service():
+    return get_order_confirmation_service()
 
 
 @router.post("/confirm-order")
 async def start_confirm_order_call(
     body: ConfirmOrderCallBody,
-    service: OrderConfirmationService = Depends(get_confirmation_service),
+    service=Depends(get_confirmation_service),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     """
-    Check Shopify tags (skip if AI Confirmed / confirmed), then place outbound confirmation call.
+    Check confirmation markers/tags (skip if already confirmed), then place outbound call.
 
     Requires TELEPHONY_PROVIDER (twilio | exotel | mock) and PUBLIC_WS_URL for Exotel.
     """

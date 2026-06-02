@@ -14,7 +14,7 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from app.services.call_context_store import get_context, save_context
-from app.services.order_confirmation_service import order_confirmation_service
+from app.services.confirmation_factory import get_order_confirmation_service
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class ConfirmationOutcomeProcessor(FrameProcessor):
             return
         self._finalized = True
         try:
-            await order_confirmation_service.finalize_call(
+            await get_order_confirmation_service().finalize_call(
                 self._session_id,
                 force_no_answer=force_no_answer,
             )

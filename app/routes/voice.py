@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, Query, Request, WebSocket, WebSocketDisc
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from app.ai.pipeline import run_telephony_voice_session
-from app.services.order_confirmation_service import order_confirmation_service
 from app.services.telephony_twiml import (
     exotel_inbound_voicebot_ws_url,
     exotel_voicebot_hint,
@@ -226,7 +225,9 @@ async def outbound_call_status(
         "canceled",
         "cancelled",
     ):
-        await order_confirmation_service.finalize_call(
+        from app.services.confirmation_factory import get_order_confirmation_service
+
+        await get_order_confirmation_service().finalize_call(
             session_id,
             force_no_answer=True,
         )

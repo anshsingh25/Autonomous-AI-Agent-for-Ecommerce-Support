@@ -28,6 +28,10 @@ _TOOL_HOLD_LINES: dict[str, str] = {
     "cancel_order": (
         "Alright — please wait a moment while I process the cancellation on your order."
     ),
+    "update_delivery_address": "One moment — I'm saving your new delivery address.",
+    "update_item_quantity": "Just a moment — I'm updating the quantity on your order.",
+    "list_item_variants": "One moment — I'm checking which sizes and colours are in stock.",
+    "swap_item_variant": "Please hold on — I'm updating the size and colour on your order.",
 }
 
 # When update_* tools are added, extend this map.

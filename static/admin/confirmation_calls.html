@@ -148,9 +148,8 @@
       <a href="/docs">API docs</a>
     </p>
     <h1>Order confirmation calls</h1>
-    <p class="sub">
-      Unfulfilled Shopify orders without <strong>AI Confirmed</strong> / <strong>confirmed</strong> tags.
-      Use <strong>Call customer</strong> per row or <strong>Call all ready</strong> for batch Exotel dials.
+    <p class="sub" id="deskSubtitle">
+      Open orders that still need an outbound confirmation call.
     </p>
 
     <div id="banner" class="banner"></div>
@@ -194,8 +193,8 @@
         </table>
         <div id="pendingEmpty" class="empty" style="display:none">No orders need confirmation right now.</div>
       </div>
-      <p class="hint">
-        If phone is empty, Shopify API may not return it (Basic plan / incomplete address). Enter the number from Admin, then call.
+      <p class="hint" id="deskPhoneHint">
+        If phone is empty, import it in order desk or enter the number from Admin, then call.
       </p>
     </section>
 
@@ -235,6 +234,47 @@
 
     let pendingRows = [];
     let calling = false;
+    let deskMeta = {
+      pending_url: "/api/shopify/confirmation/pending",
+      scan_url: "/api/shopify/confirmation/scan-unfulfilled",
+      tagged_pending_url: "/api/shopify/confirmation/tagged-pending",
+      dial_tagged_url: "/api/shopify/confirmation/dial-tagged",
+      supports_tag_batch: true,
+      platform_label: "Shopify",
+      brand: "badlavo",
+    };
+
+    async function loadDeskMeta() {
+      try {
+        const res = await fetch("/api/confirmation/desk-meta");
+        if (res.ok) {
+          deskMeta = await res.json();
+          document.title = `Order confirmation — ${deskMeta.brand || "store"}`;
+          const plat = deskMeta.platform_label || "store";
+          const sub = document.getElementById("deskSubtitle");
+          if (deskMeta.data_source === "magento") {
+            sub.innerHTML =
+              `Open <strong>${plat}</strong> orders without <strong>AI Confirmed</strong> markers. ` +
+              "Use <strong>Call customer</strong> or <strong>Call all ready</strong>.";
+            document.getElementById("deskPhoneHint").textContent =
+              "If phone is empty, add it in order desk or Magento Admin, then call.";
+          } else {
+            sub.innerHTML =
+              `Unfulfilled <strong>${plat}</strong> orders without <strong>AI Confirmed</strong> / ` +
+              "<strong>confirmed</strong> tags. Use <strong>Call customer</strong> or " +
+              "<strong>Call all ready</strong>.";
+          }
+          const tagRow = document.getElementById("tagInput").closest("label");
+          const hideTag = !deskMeta.supports_tag_batch;
+          if (tagRow) tagRow.style.display = hideTag ? "none" : "";
+          tagListBtn.style.display = hideTag ? "none" : "";
+          tagDialBtn.style.display = hideTag ? "none" : "";
+          tagDryBtn.style.display = hideTag ? "none" : "";
+        }
+      } catch (e) {
+        log("desk-meta: " + e.message);
+      }
+    }
 
     function log(msg) {
       const t = new Date().toLocaleTimeString();
@@ -265,7 +305,7 @@
       refreshBtn.disabled = true;
       const limit = parseInt(limitInput.value, 10) || 30;
       try {
-        const res = await fetch(`/api/shopify/confirmation/pending?limit=${limit}`);
+        const res = await fetch(`${deskMeta.pending_url}?limit=${limit}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || res.statusText);
 
@@ -446,7 +486,7 @@
       const limit = parseInt(limitInput.value, 10) || 30;
       try {
         const res = await fetch(
-          `/api/shopify/confirmation/scan-unfulfilled?limit=${limit}&dry_run=true`,
+          `${deskMeta.scan_url}?limit=${limit}&dry_run=true`,
           { method: "POST" }
         );
         const data = await res.json();
@@ -479,7 +519,11 @@
       tagListBtn.disabled = true;
       try {
         const q = new URLSearchParams({ tag, limit: String(limit) });
-        const res = await fetch(`/api/shopify/confirmation/tagged-pending?${q}`);
+        if (!deskMeta.tagged_pending_url) {
+          showBanner("Tag batch dial is not configured for this data source.", "err");
+          return;
+        }
+        const res = await fetch(`${deskMeta.tagged_pending_url}?${q}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || res.statusText);
         showBanner(
@@ -501,7 +545,11 @@
       const btn = dryRun ? tagDryBtn : tagDialBtn;
       btn.disabled = true;
       try {
-        const res = await fetch("/api/shopify/confirmation/dial-tagged", {
+        if (!deskMeta.dial_tagged_url) {
+          showBanner("Tag batch dial is not configured for this data source.", "err");
+          return;
+        }
+        const res = await fetch(deskMeta.dial_tagged_url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ tag, limit, dry_run: dryRun, delay_sec: 2.5 }),
@@ -533,7 +581,10 @@
     });
     tagDryBtn.addEventListener("click", () => dialTagged(true));
 
-    loadList();
+    (async () => {
+      await loadDeskMeta();
+      await loadList();
+    })();
   </script>
 </body>
 </html>

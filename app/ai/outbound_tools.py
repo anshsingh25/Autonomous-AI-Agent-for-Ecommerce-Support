@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import Any
 
 from pipecat.adapters.schemas.function_schema import FunctionSchema
@@ -12,7 +11,9 @@ from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.services.llm_service import FunctionCallParams, LLMService
 
 from app.ai.tool_hold import speak_tool_hold
+from app.ai.tool_parsing import parse_quantity
 from app.database.factory import create_order_repository
+from app.database.magento_store import MagentoRepository
 from app.database.shopify_store import ShopifyRepository
 from app.services.call_context_store import get_context, save_context
 from app.ai.outbound_call_state import remind_after_tool
@@ -28,42 +29,6 @@ from app.services.outbound_order_edits import (
 from app.utils.config import get_settings
 
 logger = logging.getLogger(__name__)
-
-_NUMBER_WORDS: dict[str, int] = {
-    "zero": 0,
-    "one": 1,
-    "two": 2,
-    "three": 3,
-    "four": 4,
-    "five": 5,
-    "six": 6,
-    "seven": 7,
-    "eight": 8,
-    "nine": 9,
-    "ten": 10,
-}
-
-
-def _parse_quantity(raw: object) -> int | None:
-    """Parse numeric or spoken quantity robustly (e.g. 3, '3', 'three')."""
-    if raw is None:
-        return None
-    if isinstance(raw, bool):
-        return None
-    if isinstance(raw, int):
-        return raw
-    text = str(raw).strip().lower()
-    if not text:
-        return None
-    if text.isdigit():
-        return int(text)
-    if text in _NUMBER_WORDS:
-        return _NUMBER_WORDS[text]
-    # Accept phrases like "qty 3" or "3 pieces".
-    m = re.search(r"\b(\d{1,2})\b", text)
-    if m:
-        return int(m.group(1))
-    return None
 
 
 def build_outbound_tools_schema() -> ToolsSchema:
@@ -205,10 +170,17 @@ def register_outbound_confirmation_tools(
     """Register tools bound to one outbound call session (order already known)."""
     settings = get_settings()
     shopify: ShopifyRepository | None = None
-    if settings.data_source.lower() == "shopify":
+    magento: MagentoRepository | None = None
+    ds = settings.data_source.lower()
+    if ds == "shopify":
         repo = create_order_repository(settings)
         if isinstance(repo, ShopifyRepository):
             shopify = repo
+    elif ds == "magento":
+        repo = create_order_repository(settings)
+        if isinstance(repo, MagentoRepository):
+            magento = repo
+    platform = shopify or magento
 
     def _ctx_or_error() -> tuple[Any, dict | None]:
         ctx = get_context(session_id)
@@ -266,7 +238,7 @@ def register_outbound_confirmation_tools(
                 return
             await refresh_outbound_context(ctx)
             snap = await get_confirmation_snapshot(ctx.order_id)
-            if not snap.get("found") and not shopify:
+            if not snap.get("found") and not platform:
                 await p.result_callback(
                     json.dumps(
                         {
@@ -313,7 +285,7 @@ def register_outbound_confirmation_tools(
             if err:
                 await p.result_callback(json.dumps(err))
                 return
-            qty = _parse_quantity(p.arguments.get("quantity"))
+            qty = parse_quantity(p.arguments.get("quantity"))
             if qty is None:
                 await p.result_callback(
                     json.dumps(
@@ -386,15 +358,15 @@ def register_outbound_confirmation_tools(
             reason = str(p.arguments.get("reason", "")).strip()
             if order_desk_primary():
                 result = await order_service.cancel_order(ctx.order_id, reason=reason)
-            elif shopify:
-                result = await shopify.cancel_order_api(
+            elif platform:
+                result = await platform.cancel_order_api(
                     ctx.order_id,
                     reason=reason or "Customer cancelled during AI confirmation call",
                 )
             else:
                 result = {
                     "success": False,
-                    "message": "Cancellation requires order desk or Shopify",
+                    "message": "Cancellation requires order desk or ecommerce API",
                 }
             if result.get("success"):
                 from app.models.call_outcome import CallOutcome
@@ -402,6 +374,7 @@ def register_outbound_confirmation_tools(
                 ctx.shopify_cancel_via_tool = True
                 ctx.outcome = CallOutcome.CANCELLED
                 ctx.final_confirm_received = True
+                ctx.agent_turns_after_final_confirm = 0
                 save_context(ctx)
             await p.result_callback(json.dumps(result))
 

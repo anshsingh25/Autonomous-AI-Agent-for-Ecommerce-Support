@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="urn:magento:module:Magento_Webapi:etc/webapi.xsd">
+    <route url="/V1/aria-voice/orders/:orderId/shipping-address" method="PUT">
+        <service class="Aria\VoiceOrder\Api\OrderEditManagementInterface" method="updateShippingAddress"/>
+        <resources>
+            <resource ref="Aria_VoiceOrder::edit"/>
+        </resources>
+    </route>
+    <route url="/V1/aria-voice/orders/items/:itemId/quantity" method="PUT">
+        <service class="Aria\VoiceOrder\Api\OrderEditManagementInterface" method="updateItemQuantity"/>
+        <resources>
+            <resource ref="Aria_VoiceOrder::edit"/>
+        </resources>
+    </route>
+</routes>

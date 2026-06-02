@@ -18,6 +18,9 @@ from pipecat.turns.user_start import VADUserTurnStartStrategy
 from pipecat.turns.user_start.transcription_user_turn_start_strategy import (
     TranscriptionUserTurnStartStrategy,
 )
+from pipecat.turns.user_stop.speech_timeout_user_turn_stop_strategy import (
+    SpeechTimeoutUserTurnStopStrategy,
+)
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService, GeminiVADParams
@@ -37,8 +40,13 @@ from app.ai.audio_config import (
     TWILIO_SAMPLE_RATE,
 )
 from app.ai.confirmation_outcome_processor import ConfirmationOutcomeProcessor
-from app.ai.prompts import OPENING_GREETING, SYSTEM_INSTRUCTION
-from app.ai.prompts_outbound import OUTBOUND_SYSTEM_INSTRUCTION, outbound_bootstrap_message
+from app.ai.store_prompt import (
+    build_inbound_opening_greeting,
+    build_inbound_system_instruction,
+    build_outbound_system_instruction,
+    is_uk_voice_site,
+    outbound_bootstrap_message,
+)
 from app.ai.outbound_tools import (
     build_outbound_tools_schema,
     register_outbound_confirmation_tools,
@@ -98,7 +106,8 @@ def create_gemini_llm(
 
     llm = GeminiLiveLLMService(
         api_key=settings.gemini_api_key,
-        system_instruction=system_instruction or SYSTEM_INSTRUCTION,
+        system_instruction=system_instruction
+        or build_inbound_system_instruction(settings),
         tools=tools,
         settings=gemini_settings,
         inference_on_context_initialization=False,
@@ -109,6 +118,7 @@ def create_gemini_llm(
         # outbound uses Gemini VAD, not only Pipecat Silero legs).
         OutboundGeminiLiveLLMService.patch_outbound_telephony_stability(llm)
     if outbound_session_id:
+        llm._outbound_session_id = outbound_session_id
         register_outbound_confirmation_tools(llm, outbound_session_id)
     elif enable_tools:
         register_ecommerce_tools(llm)
@@ -133,7 +143,9 @@ async def run_pipeline(
     is_outbound = outbound_context is not None
     # Pipecat Silero turns + disabled Gemini VAD — used on PSTN *inbound* and legacy PSTN outbound.
     is_pipecat_vad_mode = use_pipecat_vad
-    outbound_instruction = OUTBOUND_SYSTEM_INSTRUCTION if is_outbound else None
+    outbound_instruction = (
+        build_outbound_system_instruction(settings) if is_outbound else None
+    )
     llm = create_gemini_llm(
         settings,
         use_pipecat_vad=use_pipecat_vad,
@@ -167,12 +179,20 @@ async def run_pipeline(
         # noise/echo and cuts the agent. Match pipecat-vad telephony: suppress
         # Pipecat interruptions and mute user STT during agent turns (Gemini
         # still handles realtime barge-in on the Live session).
+        #
+        # Stop strategy: SpeechTimeout (fast). Default TurnAnalyzer+SmartTurn adds
+        # noticeable lag after the customer stops speaking on PSTN.
         user_params = LLMUserAggregatorParams(
             user_turn_strategies=UserTurnStrategies(
                 start=[
                     VADUserTurnStartStrategy(enable_interruptions=False),
                     TranscriptionUserTurnStartStrategy(
                         use_interim=True, enable_interruptions=False
+                    ),
+                ],
+                stop=[
+                    SpeechTimeoutUserTurnStopStrategy(
+                        user_speech_timeout=settings.gemini_outbound_user_turn_stop_timeout_sec,
                     ),
                 ],
             ),
@@ -201,6 +221,7 @@ async def run_pipeline(
                 llm,
                 customer_name=outbound_context.customer_name,
                 session_id=outbound_context.session_id,
+                uk_english_only=is_uk_voice_site(settings),
             )
         )
     if is_pipecat_vad_mode:
@@ -215,7 +236,6 @@ async def run_pipeline(
                 hangup_delay_sec=1.8,
             )
         )
-
     output_chain.extend([transport.output(), context_aggregator.assistant()])
     processors.extend(output_chain)
 
@@ -279,14 +299,16 @@ async def run_pipeline(
 
         if outbound_context:
             bootstrap = outbound_bootstrap_message(
+                settings,
                 outbound_context.summary_for_prompt(),
                 outbound_context.customer_name,
             )
         else:
+            opening = build_inbound_opening_greeting(settings)
             bootstrap = (
                 "[System — not the customer] A new voice call connected. "
                 f'Say ONLY this greeting verbatim, then stop and listen: '
-                f'"{OPENING_GREETING}" '
+                f'"{opening}" '
                 "Then wait for the customer. When they speak (even just hello), "
                 "reply to them naturally — never use silence-check phrases like "
                 "'Are you there?' if they just talked. "
@@ -346,10 +368,12 @@ async def run_pipeline(
     async def on_client_disconnected(transport: BaseTransport, websocket) -> None:
         logger.info("%s: client disconnected", label)
         if is_outbound and outbound_context and not outbound_context.outcome_applied:
-            from app.services.order_confirmation_service import order_confirmation_service
+            from app.services.confirmation_factory import get_order_confirmation_service
 
             asyncio.create_task(
-                order_confirmation_service.finalize_call(outbound_context.session_id)
+                get_order_confirmation_service().finalize_call(
+                    outbound_context.session_id
+                )
             )
 
     @task.event_handler("on_pipeline_started")

@@ -118,18 +118,22 @@ class OutboundShortReplyProcessor(FrameProcessor):
         *,
         customer_name: str,
         session_id: str | None = None,
+        uk_english_only: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._llm = llm
         self._customer_name = customer_name or "there"
         self._session_id = session_id
+        self._uk_english_only = uk_english_only
         self._last_nudge_at = 0.0
         self._nudge_in_flight = False
-        self._language_locked = False
+        self._language_locked = uk_english_only
         self._started_at = time.monotonic()
 
     def _can_language_nudge(self, heard: str) -> bool:
+        if self._uk_english_only:
+            return False
         """
         Keep language nudges to the opening stage only.
 
