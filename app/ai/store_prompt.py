@@ -25,6 +25,27 @@ def order_platform_label(settings: Settings) -> str:
     return "store"
 
 
+def _browser_order_number_rules(settings: Settings) -> str:
+    """Voice chat has an on-screen order number field — prefer typing over verbal ID questions."""
+    if settings.data_source.lower().strip() == "magento":
+        return (
+            "\n\nORDER NUMBER — USE THE ON-SCREEN BOX (mandatory wording): "
+            "The customer sees an order number field on this page (below Start conversation). "
+            "When you need their order number, tell them once to TYPE it in that box and tap Send — "
+            'e.g. "Please type your order number in the box on screen and tap Send — I\'ll look it up." '
+            'Do NOT ask "What is your order ID?", "What\'s your order number?", or similar as your main ask. '
+            "When they tap Send, the system looks up that order automatically — speak the full result. "
+            "If they say a different number aloud later, prefer what they said. "
+            "Do not interrupt the call when they type."
+        )
+    return (
+        "\n\nORDER NUMBER — ON-SCREEN BOX: When you need their order number on this browser chat, "
+        "ask them to type it in the order number box on screen and tap Send — not only "
+        '"What is your order number?" They may also say digits aloud. '
+        "Use the typed number from the system note when you receive it."
+    )
+
+
 def build_inbound_opening_greeting(settings: Settings) -> str:
     brand = store_brand(settings)
     return (
@@ -36,11 +57,13 @@ def build_inbound_system_instruction(settings: Settings) -> str:
     """Inbound support prompt — identical to legacy Shopify/badlavo unless DATA_SOURCE=magento."""
     from app.ai.prompts import SYSTEM_INSTRUCTION
 
+    typed_order_note = _browser_order_number_rules(settings)
+
     if settings.data_source.lower() != "magento":
         brand = store_brand(settings)
         if brand.lower() == "badlavo":
-            return SYSTEM_INSTRUCTION
-        return SYSTEM_INSTRUCTION.replace("badlavo", brand)
+            return SYSTEM_INSTRUCTION + typed_order_note
+        return SYSTEM_INSTRUCTION.replace("badlavo", brand) + typed_order_note
 
     brand = store_brand(settings)
     text = SYSTEM_INSTRUCTION.replace("badlavo", brand)
@@ -68,7 +91,7 @@ def build_inbound_system_instruction(settings: Settings) -> str:
             "changes save to Magento Admin (requires Aria_VoiceOrder module on the store). "
             "Use postcode not PIN. Variant swap tools are not available on Magento."
         )
-    return text
+    return text + typed_order_note
 
 
 def build_outbound_system_instruction(settings: Settings) -> str:

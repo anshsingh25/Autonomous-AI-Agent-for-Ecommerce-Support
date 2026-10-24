@@ -246,8 +246,14 @@ async def run_browser_outbound_session(
     )
 
 
-async def run_browser_voice_session(websocket: WebSocket, settings: Settings) -> None:
+async def run_browser_voice_session(
+    websocket: WebSocket,
+    settings: Settings,
+    *,
+    inbound_session_id: str | None = None,
+) -> None:
     """Browser mic (16 kHz PCM) → Gemini Live (24 kHz out) → gapless browser playback."""
+    sid = (inbound_session_id or websocket.query_params.get("session_id") or "").strip()
     params = FastAPIWebsocketParams(
         audio_in_enabled=True,
         audio_out_enabled=True,
@@ -257,12 +263,17 @@ async def run_browser_voice_session(websocket: WebSocket, settings: Settings) ->
         vad_analyzer=None,
         add_wav_header=False,
         fixed_audio_packet_size=BROWSER_AUDIO_PACKET_BYTES,
-        serializer=BrowserAudioSerializer(sample_rate=GEMINI_OUTPUT_SAMPLE_RATE),
+        serializer=BrowserAudioSerializer(
+            sample_rate=GEMINI_OUTPUT_SAMPLE_RATE,
+            inbound_session_id=sid or None,
+        ),
     )
     transport = FastAPIWebsocketTransport(websocket=websocket, params=params)
     logger.info(
-        "Browser voice session started (in=%s Hz, out=%s Hz, Gemini VAD)",
+        "Browser voice session started (in=%s Hz, out=%s Hz, Gemini VAD, session=%s)",
         BROWSER_INPUT_SAMPLE_RATE,
+        GEMINI_OUTPUT_SAMPLE_RATE,
+        sid[:8] if sid else "none",
     )
     await run_pipeline(
         transport,
@@ -273,4 +284,5 @@ async def run_browser_voice_session(websocket: WebSocket, settings: Settings) ->
         use_pipecat_vad=False,
         greet_on_start=True,
         allow_interruptions=True,
+        inbound_session_id=sid or None,
     )

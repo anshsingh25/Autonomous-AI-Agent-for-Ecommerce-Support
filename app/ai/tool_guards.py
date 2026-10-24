@@ -42,6 +42,33 @@ def normalize_order_id(raw: str) -> str:
     return text.replace(" ", "").upper()
 
 
+def resolve_order_id_for_tool(
+    raw: str,
+    *,
+    data_source: str | None = None,
+    inbound_session_id: str | None = None,
+) -> tuple[str, dict[str, Any] | None]:
+    """
+    Normalize order id for tools. Falls back to customer-typed id when speech was missing/invalid.
+    """
+    from app.services.inbound_session_store import get_typed_order_id
+
+    cleaned = normalize_order_id(raw)
+    err = reject_tool_without_customer_order_id(cleaned, data_source=data_source)
+    if err is None:
+        return cleaned, None
+
+    typed = get_typed_order_id(inbound_session_id)
+    if typed:
+        typed_clean = normalize_order_id(typed)
+        err2 = reject_tool_without_customer_order_id(
+            typed_clean, data_source=data_source
+        )
+        if err2 is None:
+            return typed_clean, None
+    return cleaned, err
+
+
 def reject_tool_without_customer_order_id(
     order_id: str,
     *,
@@ -60,9 +87,9 @@ def reject_tool_without_customer_order_id(
             "found": False,
             "error": "missing_order_id",
             "instruction_for_agent": (
-                "You do not have an order number from the customer yet. "
-                "Ask: What is your order number? Do NOT guess or invent a number. "
-                "Do NOT call this tool again until they say digits clearly."
+                "You do not have an order number yet. Tell the customer once: "
+                "please type their order number in the box on screen and tap Send. "
+                'Do NOT ask "What is your order ID?" Do NOT guess or invent a number.'
             ),
         }
     if ds == "magento":
@@ -72,8 +99,8 @@ def reject_tool_without_customer_order_id(
                 "error": "invalid_order_id",
                 "instruction_for_agent": (
                     f"'{order_id}' is not a valid Magento order number. "
-                    "Use the increment id the customer stated (digits, e.g. 000000123). "
-                    "Ask them to repeat the order number."
+                    "Ask them to type the correct order number in the box on screen and tap Send, "
+                    "or say the digits clearly."
                 ),
             }
         return None
@@ -84,7 +111,8 @@ def reject_tool_without_customer_order_id(
             "error": "invalid_order_id",
             "instruction_for_agent": (
                 f"'{order_id}' is not a valid order number format. "
-                "Only use digits the customer stated. Ask them to repeat the order number."
+                "Ask them to type the order number in the box on screen and tap Send, "
+                "or say the digits clearly."
             ),
         }
     return None

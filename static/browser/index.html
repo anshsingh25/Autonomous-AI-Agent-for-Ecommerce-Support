@@ -89,16 +89,60 @@
       max-height: 4rem;
       overflow-y: auto;
     }
+    .order-type {
+      margin-top: 1rem;
+      padding: .85rem 1rem;
+      background: rgba(0,0,0,.2);
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,.06);
+    }
+    .order-type label {
+      display: block;
+      font-size: .78rem;
+      color: var(--muted);
+      margin-bottom: .4rem;
+      line-height: 1.4;
+    }
+    .order-type-row {
+      display: flex;
+      gap: .5rem;
+    }
+    .order-type input {
+      flex: 1;
+      padding: .55rem .65rem;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(0,0,0,.25);
+      color: var(--text);
+      font-size: .9rem;
+    }
+    .order-type button {
+      width: auto;
+      padding: .55rem .85rem;
+      font-size: .85rem;
+      background: rgba(59, 130, 246, .25);
+      color: var(--text);
+      border: 1px solid rgba(59, 130, 246, .4);
+    }
+    .order-type button:hover:not(:disabled) {
+      background: rgba(59, 130, 246, .4);
+    }
+    .order-type .saved {
+      margin-top: .45rem;
+      font-size: .75rem;
+      color: var(--success);
+      min-height: 1rem;
+    }
   </style>
 </head>
 <body>
   <div class="card">
-    <p style="font-size:.8rem;margin:0 0 .75rem">
+    <p id="devNav" style="font-size:.8rem;margin:0 0 .75rem">
       <a href="/browser/outbound" style="color:var(--accent)">Outbound browser test →</a>
       · <a href="/browser/confirmation-desk" style="color:var(--accent)">Call unconfirmed orders →</a>
     </p>
-    <h1>badlavo Voice Test</h1>
-    <p class="sub">Talk to Aria, badlavo support — browser mic, no phone needed</p>
+    <h1 id="pageTitle">badlavo Voice Test</h1>
+    <p class="sub" id="pageSub">Talk to Aria, badlavo support — browser mic, no phone needed</p>
 
     <div class="status">
       <span class="dot" id="dot"></span>
@@ -107,17 +151,57 @@
 
     <button type="button" id="connectBtn">Start conversation</button>
 
+    <div class="order-type" id="orderTypeBox" hidden>
+      <label for="orderIdInput">
+        Type your order number here, then tap Send. Aria will ask you to use this box — it does not interrupt the call.
+      </label>
+      <div class="order-type-row">
+        <input
+          type="text"
+          id="orderIdInput"
+          placeholder="e.g. 4000053033"
+          autocomplete="off"
+          inputmode="numeric"
+        />
+        <button type="button" id="sendOrderIdBtn">Send</button>
+      </div>
+      <div class="saved" id="orderIdSaved"></div>
+    </div>
+
     <div class="log" id="log"></div>
 
     <div class="hints">
-      <strong>Wait for Aria’s greeting</strong>, then ask:<br />
-      “What is the status of order 1569?”<br /><br />
-      Use headphones. Mic stays off until Aria finishes the greeting (stops false order IDs).
+      <strong>Wait for Aria’s greeting</strong>, then type your order number in the box above and tap <strong>Send</strong> (Aria will ask you to do this). You can also say the number aloud.<br /><br />
+      Use headphones. Mic stays off until Aria finishes the greeting.
     </div>
   </div>
 
   <script>
     // Must match server: 16 kHz mic in, 24 kHz Gemini playback out
+    const isStorefront =
+      location.pathname.endsWith("/support") || location.pathname.includes("/browser/support");
+    const urlParams = new URLSearchParams(location.search);
+    const presetOrderId = (urlParams.get("order_id") || "").trim();
+
+    if (isStorefront) {
+      const devNav = document.getElementById("devNav");
+      if (devNav) devNav.hidden = true;
+      (async () => {
+        try {
+          const h = await fetch("/health").then((r) => r.json());
+          const brand = (h.store_brand_name || "Store").trim();
+          document.title = `${brand} — voice support`;
+          document.getElementById("pageTitle").textContent = `${brand} support`;
+          document.getElementById("pageSub").textContent =
+            `Talk to Aria, ${brand} support — browser mic, no phone needed`;
+        } catch (_) {
+          document.getElementById("pageTitle").textContent = "Voice support";
+          document.getElementById("pageSub").textContent =
+            "Talk to Aria — order help in your browser";
+        }
+      })();
+    }
+
     const CAPTURE_RATE = 16000;
     const PLAYBACK_RATE = 24000;
     const CAPTURE_BUFFER = 1024;
@@ -126,7 +210,13 @@
     const statusText = document.getElementById("statusText");
     const connectBtn = document.getElementById("connectBtn");
     const logEl = document.getElementById("log");
+    const orderTypeBox = document.getElementById("orderTypeBox");
+    const orderIdInput = document.getElementById("orderIdInput");
+    const sendOrderIdBtn = document.getElementById("sendOrderIdBtn");
+    const orderIdSaved = document.getElementById("orderIdSaved");
 
+    let inboundSessionId = crypto.randomUUID();
+    if (presetOrderId) orderIdInput.value = presetOrderId;
     let ws = null;
     let audioContext = null;
     let nativeRate = CAPTURE_RATE;
@@ -149,8 +239,38 @@
 
     function wsUrl() {
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      return `${proto}//${location.host}/browser/ws`;
+      return `${proto}//${location.host}/browser/ws?session_id=${encodeURIComponent(inboundSessionId)}`;
     }
+
+    function sendTypedOrderId() {
+      const oid = (orderIdInput.value || "").trim();
+      if (!oid) {
+        orderIdSaved.textContent = "Enter an order number first.";
+        orderIdSaved.style.color = "var(--danger)";
+        return;
+      }
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        orderIdSaved.textContent = "Start the conversation first.";
+        orderIdSaved.style.color = "var(--danger)";
+        return;
+      }
+      ws.send(JSON.stringify({
+        type: "order_id",
+        order_id: oid,
+        session_id: inboundSessionId,
+      }));
+      orderIdSaved.textContent = `Checking order #${oid}…`;
+      orderIdSaved.style.color = "var(--success)";
+      log("Typed order id sent — Aria will look it up and reply");
+    }
+
+    sendOrderIdBtn.addEventListener("click", sendTypedOrderId);
+    orderIdInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        sendTypedOrderId();
+      }
+    });
 
     function setStatus(text, state = "idle") {
       statusText.textContent = text;
@@ -261,8 +381,21 @@
         connectBtn.textContent = "End conversation";
         connectBtn.classList.add("active");
         connectBtn.disabled = false;
+        orderTypeBox.hidden = false;
+        orderIdSaved.textContent = "";
         micActive = false;
         awaitingGreetingEnd = true;
+        if (presetOrderId) {
+          ws.send(
+            JSON.stringify({
+              type: "order_id",
+              order_id: presetOrderId,
+              session_id: inboundSessionId,
+            })
+          );
+          orderIdSaved.textContent = `Checking order #${presetOrderId}…`;
+          orderIdSaved.style.color = "var(--success)";
+        }
 
         source = audioContext.createMediaStreamSource(mediaStream);
         processor = audioContext.createScriptProcessor(CAPTURE_BUFFER, 1, 1);
@@ -338,6 +471,8 @@
       connectBtn.textContent = "Start conversation";
       connectBtn.classList.remove("active");
       connectBtn.disabled = false;
+      orderTypeBox.hidden = true;
+      orderIdSaved.textContent = "";
       setStatus(
         userInitiated
           ? "Disconnected"
@@ -347,12 +482,15 @@
 
     connectBtn.addEventListener("click", () => {
       if (ws) stop();
-      else start().catch((err) => {
-        console.error(err);
-        setStatus("Mic error — check permissions");
-        log(err.message || String(err));
-        connectBtn.disabled = false;
-      });
+      else {
+        inboundSessionId = crypto.randomUUID();
+        start().catch((err) => {
+          console.error(err);
+          setStatus("Mic error — check permissions");
+          log(err.message || String(err));
+          connectBtn.disabled = false;
+        });
+      }
     });
   </script>
 </body>

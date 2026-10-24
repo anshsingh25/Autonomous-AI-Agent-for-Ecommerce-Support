@@ -15,6 +15,9 @@ from pipecat.frames.frames import (
 )
 from pipecat.serializers.base_serializer import FrameSerializer
 
+from app.ai.frames import InboundTypedOrderFrame
+from app.services.inbound_session_store import set_typed_order_id
+
 
 class BrowserAudioSerializer(FrameSerializer):
     """
@@ -24,10 +27,17 @@ class BrowserAudioSerializer(FrameSerializer):
     - Either direction may send UTF-8 JSON for control messages
     """
 
-    def __init__(self, sample_rate: int = 16000, num_channels: int = 1) -> None:
+    def __init__(
+        self,
+        sample_rate: int = 16000,
+        num_channels: int = 1,
+        *,
+        inbound_session_id: str | None = None,
+    ) -> None:
         super().__init__()
         self._sample_rate = sample_rate
         self._num_channels = num_channels
+        self._inbound_session_id = (inbound_session_id or "").strip()
 
     async def serialize(self, frame: Frame) -> str | bytes | None:
         if isinstance(frame, OutputAudioRawFrame):
@@ -50,6 +60,15 @@ class BrowserAudioSerializer(FrameSerializer):
                 lang = (message.get("lang") or "").lower()
                 text = "hindi" if lang in ("hi", "hindi", "hin") else "english"
                 return InputTextRawFrame(text=text)
+            if message.get("type") == "order_id":
+                raw = str(message.get("order_id") or "").strip()
+                sid = str(message.get("session_id") or self._inbound_session_id).strip()
+                if not raw or not sid:
+                    return None
+                cleaned = set_typed_order_id(sid, raw)
+                if not cleaned:
+                    return None
+                return InboundTypedOrderFrame(session_id=sid, order_id=cleaned)
             return None
 
         if isinstance(data, (bytes, bytearray)) and len(data) > 0:

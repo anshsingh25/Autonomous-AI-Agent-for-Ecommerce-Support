@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -27,6 +28,12 @@ class OutboundPrepareBody(BaseModel):
 @router.get("/")
 async def browser_ui() -> FileResponse:
     """Voice test page — microphone + WebSocket audio."""
+    return FileResponse(_STATIC / "index.html")
+
+
+@router.get("/support")
+async def browser_support_ui() -> FileResponse:
+    """Customer voice support (Magento footer) — same UI as /browser."""
     return FileResponse(_STATIC / "index.html")
 
 
@@ -64,8 +71,13 @@ async def browser_voice_ws(websocket: WebSocket) -> None:
     await websocket.accept()
     logger.info("Browser WebSocket connected")
 
+    inbound_session_id = (
+        websocket.query_params.get("session_id", "").strip() or str(uuid.uuid4())
+    )
     try:
-        await run_browser_voice_session(websocket, settings)
+        await run_browser_voice_session(
+            websocket, settings, inbound_session_id=inbound_session_id
+        )
     except WebSocketDisconnect:
         logger.info("Browser WebSocket disconnected")
     except Exception:

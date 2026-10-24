@@ -27,6 +27,7 @@ from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService, Gemini
 
 from app.ai.gemini_outbound_llm import OutboundGeminiLiveLLMService
 from app.ai.outbound_call_state import inject_llm_reminder
+from app.ai.inbound_typed_order_processor import InboundTypedOrderProcessor
 from app.ai.outbound_hangup_processor import OutboundHangupOnCloseProcessor
 from app.ai.outbound_interruption_filter import OutboundInterruptionFilter
 from app.ai.outbound_mid_call_processor import OutboundMidCallProcessor
@@ -52,6 +53,7 @@ from app.ai.outbound_tools import (
     register_outbound_confirmation_tools,
 )
 from app.ai.tools import build_tools_schema, register_ecommerce_tools
+from app.services.inbound_session_store import clear_session
 from app.models.call_context import OutboundCallContext
 from app.utils.config import Settings
 
@@ -137,6 +139,7 @@ async def run_pipeline(
     allow_interruptions: bool = True,
     outbound_context: OutboundCallContext | None = None,
     pstn_wire: bool = False,
+    inbound_session_id: str | None = None,
 ) -> None:
     """Run Gemini Live voice pipeline on any Pipecat transport."""
     out_rate = audio_out_sample_rate or audio_in_sample_rate
@@ -156,6 +159,8 @@ async def run_pipeline(
             outbound_context.session_id if outbound_context else None
         ),
     )
+    if inbound_session_id and not is_outbound:
+        llm._inbound_session_id = inbound_session_id
     # Track whether we've already delivered the one-time opening greeting.
     llm._opening_sent = False
     context = LLMContext()
@@ -204,6 +209,8 @@ async def run_pipeline(
         transport.input(),
         context_aggregator.user(),
     ]
+    if inbound_session_id and not is_outbound:
+        processors.append(InboundTypedOrderProcessor(llm=llm))
     if is_outbound and outbound_context:
         processors.append(
             ConfirmationOutcomeProcessor(session_id=outbound_context.session_id)
@@ -313,7 +320,11 @@ async def run_pipeline(
                 "reply to them naturally — never use silence-check phrases like "
                 "'Are you there?' if they just talked. "
                 "Do NOT ask for order number in the greeting. "
-                "Do NOT call tools until they give an order number."
+                "When they need order help, tell them to TYPE their order number in the box "
+                "on screen and tap Send — do NOT ask what is their order ID. "
+                "Do NOT call tools until they typed/sent it or said digits aloud. "
+                "When they tap Send on the order box, the system looks up the order and you "
+                "must speak the full result — never stop after only 'let me check'."
             )
 
         logger.info("%s: requesting opening (%s)", label, "outbound" if is_outbound else "inbound")
@@ -367,6 +378,8 @@ async def run_pipeline(
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport: BaseTransport, websocket) -> None:
         logger.info("%s: client disconnected", label)
+        if inbound_session_id and not is_outbound:
+            clear_session(inbound_session_id)
         if is_outbound and outbound_context and not outbound_context.outcome_applied:
             from app.services.confirmation_factory import get_order_confirmation_service
 

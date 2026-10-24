@@ -115,6 +115,7 @@ def create_app() -> FastAPI:
             "service": settings.app_name,
             "docs": "/docs",
             "browser_voice_test": "/browser",
+            "browser_voice_support": "/browser/support",
             "browser_outbound_test": "/browser/outbound",
             "confirmation_calls_desk": "/browser/confirmation-desk",
             "voice_webhook_inbound": "/voice/incoming",
@@ -159,6 +160,7 @@ def create_app() -> FastAPI:
 
         return {
             "status": "healthy",
+            "store_brand_name": settings.store_brand_name,
             "data_source": settings.data_source,
             "order_desk_enabled": settings.order_desk_enabled,
             "order_desk_active": desk.enabled(),

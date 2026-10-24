@@ -1,0 +1,35 @@
+<?php
+/**
+ * Floating voice-support button — links to the Aria agent (runs on your voice server).
+ *
+ * In Magento Admin → Content → Design → Configuration → HTML Head / Footer,
+ * or in your theme footer template, include this block and set:
+ *
+ *   $block->getData('aria_voice_support_url')
+ *
+ * Example URL (ngrok or production):
+ *   https://YOUR-VOICE-HOST/browser/support
+ */
+/** @var \Magento\Framework\View\Element\Template $block */
+$url = (string) $block->getData('aria_voice_support_url');
+if ($url === '') {
+    return;
+}
+?>
+<a href="<?= $block->escapeUrl($url) ?>"
+   target="_blank"
+   rel="noopener noreferrer"
+   id="aria-voice-support"
+   style="position:fixed;bottom:24px;right:24px;z-index:9999;
+          width:56px;height:56px;border-radius:50%;background:#2563eb;
+          color:#fff;display:flex;align-items:center;justify-content:center;
+          box-shadow:0 4px 14px rgba(0,0,0,.25);text-decoration:none;"
+   title="<?= $block->escapeHtmlAttr(__('Voice support — talk to Aria')) ?>"
+   aria-label="<?= $block->escapeHtmlAttr(__('Start voice support')) ?>">
+    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24"
+         fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+        <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
+        <line x1="12" y1="18" x2="12" y2="22"/>
+    </svg>
+</a>

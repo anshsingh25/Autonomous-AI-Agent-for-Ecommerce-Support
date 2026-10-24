@@ -126,7 +126,47 @@ Inbound support on the same deployment also avoids language-preference prompts.
 On the Magento deployment, inbound uses the **same** telephony routes as Shopify:
 
 - Exotel Voicebot → `https://YOUR-HOST/voice/inbound/exotel-answer` (or Twilio `/voice/incoming`)
-- Browser test → `http://127.0.0.1:7860/browser`
+- Browser test (dev) → `http://127.0.0.1:7860/browser`
+- **Storefront voice UI (Magento footer)** → `https://YOUR-VOICE-HOST/browser/support`
+
+### Magento footer floating button
+
+The voice agent runs on your Mac/server (uvicorn + ngrok). The Magento site only **links** to it.
+
+1. Start the agent locally:
+   ```bash
+   PYTHONPATH=. uvicorn app.main:app --host 127.0.0.1 --port 7860
+   ngrok http 7860
+   ```
+2. Use the **full** path (not `/browser/sup`):
+   `https://YOUR-NGROK-SUBDOMAIN.ngrok-free.app/browser/support`
+3. Paste this in your Magento theme footer (replace the URL):
+
+```html
+<a href="https://YOUR-NGROK.ngrok-free.app/browser/support"
+   target="_blank"
+   rel="noopener noreferrer"
+   id="aria-voice-support"
+   style="position:fixed;bottom:24px;right:24px;z-index:9999;
+          width:56px;height:56px;border-radius:50%;background:#2563eb;
+          color:#fff;display:flex;align-items:center;justify-content:center;
+          box-shadow:0 4px 14px rgba(0,0,0,.25);text-decoration:none;"
+   title="Voice support — talk to Aria"
+   aria-label="Start voice support">
+  <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24"
+       fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+    <path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+    <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
+    <line x1="12" y1="18" x2="12" y2="22"/>
+  </svg>
+</a>
+```
+
+Optional: pre-fill order from Magento — `.../browser/support?order_id=4000053033`
+
+The support page is the **same UI** as local `http://127.0.0.1:7860/browser` (dev links hidden on `/browser/support` only).
+
+Template reference: `magento_module/Aria/VoiceOrder/view/frontend/templates/footer_voice_support.phtml`
 
 With `DATA_SOURCE=magento`, Aria’s inbound tools read from **Magento REST** (and order desk when enabled):
 

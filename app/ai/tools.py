@@ -9,7 +9,7 @@ from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.services.llm_service import FunctionCallParams, LLMService
 
-from app.ai.tool_guards import normalize_order_id, reject_tool_without_customer_order_id
+from app.ai.tool_guards import resolve_order_id_for_tool
 from app.ai.tool_hold import speak_tool_hold
 from app.ai.tool_parsing import parse_quantity
 from app.services.order_service import OrderService, order_service
@@ -162,8 +162,9 @@ def build_tools_schema() -> ToolsSchema:
                 name="get_order_status",
                 description=(
                     "Look up order status and delivery/shipping address ONLY after the customer "
-                    "said their order number aloud. Before calling, tell them to wait while you "
-                    "pull up the order. Never guess or use example IDs."
+                    "typed their order number in the on-screen box (and tapped Send) and/or said "
+                    "it aloud. Before calling, tell them to wait while you pull up the order. "
+                    "Never guess or use example IDs."
                 ),
                 properties={
                     "order_id": {
@@ -229,11 +230,17 @@ def register_ecommerce_tools(llm: LLMService, service: OrderService | None = Non
     svc = service or order_service
     data_source = get_settings().data_source.lower().strip()
 
+    def _inbound_session_id(params: FunctionCallParams) -> str | None:
+        sid = getattr(params.llm, "_inbound_session_id", None)
+        return str(sid).strip() if sid else None
+
     async def _guarded_order_id(params: FunctionCallParams) -> tuple[str, dict | None]:
         raw = str(params.arguments.get("order_id", "")).strip()
-        order_id = normalize_order_id(raw)
-        err = reject_tool_without_customer_order_id(raw, data_source=data_source)
-        return order_id, err
+        return resolve_order_id_for_tool(
+            raw,
+            data_source=data_source,
+            inbound_session_id=_inbound_session_id(params),
+        )
 
     async def _safe_result(params: FunctionCallParams, fn, tool_name: str) -> None:
         try:
